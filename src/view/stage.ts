@@ -1,0 +1,350 @@
+// 舞台：镜头容器 + 玻璃网格（40 格）+ 画作池 + 缩略图池。
+// 节点只在构造时（缩略图池按需扩容）创建一次；render() 每帧只改 transform / opacity / filter 等。
+// 卡片尺寸跟随画作比例：只在池子节点换了作品时改宽高，不在每帧改。
+import type { Work } from '../data/types';
+import { displayTitle } from '../data/series-ops';
+import { t } from '../i18n';
+import { r3, U, clamp } from '../engine/math';
+import {
+  RENDER_RANGE, GRID_W, GRID_H, paintingAt, collectSinker, tileCenter, tileEdgeFade, tileAvoid,
+  tileOpacity, tileRadius, cameraScale, cameraTilt, thumbAt, artSize, thumbSize, shadowWeights, tileNeedsBackdrop,
+  DEFAULT_ART, type Sinker, type PaintingInput, type ArtSize, type BackdropRect,
+} from '../engine/mapping';
+import { stage as S, shadow, GLASS_STRENGTH } from '../tokens';
+
+/** 玻璃模糊半径（px），和 tokens 里 glass-blur 的算法一致 */
+const GLASS_BLUR_PX = Math.round(12 + GLASS_STRENGTH * 20);
+import { el, Styled } from './dom';
+import { artKey, fillArt } from './art';
+
+/** 同时在范围内的画作最多 6 幅（|d| ≤ 2.65），其中可见的最多 5 幅 */
+const CARD_POOL = 6;
+
+interface Slot {
+  node: Styled<HTMLButtonElement>;
+  canvas: HTMLElement;
+  /** 画作的两层阴影（中间 / 侧边），缩略图没有 */
+  shadowCenter: Styled | null;
+  shadowSide: Styled | null;
+  workId: string | null;
+  /** 当前内容的身份（作品 + 图片地址 + 状态） */
+  key: string;
+  /** 当前尺寸对应的宽高比 */
+  aspect: number;
+  art: ArtSize;
+  index: number;
+  shown: boolean;
+}
+
+interface TileSlot {
+  node: Styled;
+  tx: number;
+  ty: number;
+  edge: number;
+}
+
+export interface StageFrame {
+  works: readonly Work[];
+  pos: number;
+  posV: number;
+  zoom: number;
+  zoomV: number;
+  press: number;
+  /** 指针位置（u，相对窗口中心） */
+  ox: number;
+  oy: number;
+  mot: number;
+  cur: number;
+  /** 当前作品的同系列成员（不含当前），按时间顺序 */
+  members: readonly number[];
+  /** 缩略图整排淡出系数 */
+  fade: number;
+  hoverThumb: string | null;
+  /** 拖动锁轴后光标变成 grabbing */
+  grabbing: boolean;
+  /** 减少动态效果：关掉速度倾斜和镜头俯仰 */
+  reduced: boolean;
+  /** 已经解码好的原图（只给停留超过 300ms 的那一幅） */
+  hiRes: { id: string; url: string } | null;
+}
+
+export interface StageHandlers {
+  /** 点击画作 / 缩略图 */
+  go?: (index: number, fromThumb: boolean) => void;
+  thumbHover?: (workId: string | null) => void;
+  /** 图片读取失败（original = 原图失败，可以退回缩略图） */
+  artError?: (workId: string, original: boolean, src: string) => void;
+}
+
+const aspectOf = (w: Work): number => (w.width && w.height ? w.width / w.height : NaN);
+
+export class StageView {
+  readonly section: HTMLElement;
+  private camera: Styled;
+  private tiles: TileSlot[] = [];
+  private cards: Slot[] = [];
+  private thumbs: Slot[] = [];
+  private sinkers: Sinker[] = [];
+  /** 玻璃后、看得见的画作外框：只有它们附近的玻璃格需要背景模糊 */
+  private behind: BackdropRect[] = [];
+  private claimed: boolean[] = [];
+  private grabbing = false;
+
+  constructor(public handlers: StageHandlers = {}) {
+    this.section = el('section', { class: 'stage', tabindex: 0, 'data-i18n-aria': 'stage.aria' });
+    const camera = el('div', { class: 'camera' });
+    this.camera = new Styled(camera);
+    this.section.append(camera);
+
+    // 玻璃网格：祖先链上只有 transform，不能加 opacity / filter / mask（HANDOFF §2）
+    const grid = el('div', { class: 'glass-grid', 'aria-hidden': 'true' });
+    grid.style.width = U(GRID_W);
+    grid.style.height = U(GRID_H);
+    grid.style.marginLeft = U(-GRID_W / 2);
+    grid.style.marginTop = U(-GRID_H / 2);
+    grid.style.gap = U(S.tileGap);
+    grid.style.gridTemplateColumns = `repeat(${S.gridCols}, minmax(0, 1fr))`;
+    grid.style.gridTemplateRows = `repeat(${S.gridRows}, minmax(0, 1fr))`;
+    for (let r = 0; r < S.gridRows; r++) {
+      for (let c = 0; c < S.gridCols; c++) {
+        const node = el('div', { class: 'glass-tile' });
+        grid.append(node);
+        const { tx, ty } = tileCenter(c, r);
+        this.tiles.push({ node: new Styled(node), tx, ty, edge: tileEdgeFade(c, r) });
+      }
+    }
+    camera.append(grid);
+
+    for (let i = 0; i < CARD_POOL; i++) {
+      const slot = this.makeSlot('art', false);
+      camera.append(slot.node.el);
+      this.cards.push(slot);
+    }
+  }
+
+  private makeSlot(cls: 'art' | 'thumb', fromThumb: boolean): Slot {
+    const canvas = el('span', { class: 'art-canvas' });
+    let shadowCenter: Styled | null = null;
+    let shadowSide: Styled | null = null;
+    const children: HTMLElement[] = [];
+    if (cls === 'art') {
+      const c = el('span', { class: 'art-shadow art-shadow--center', 'aria-hidden': 'true' });
+      const s = el('span', { class: 'art-shadow art-shadow--side', 'aria-hidden': 'true' });
+      shadowCenter = new Styled(c);
+      shadowSide = new Styled(s);
+      children.push(c, s);
+    }
+    children.push(canvas);
+    const btn = el('button', { type: 'button', class: cls, tabindex: -1 }, children);
+    const slot: Slot = {
+      node: new Styled(btn), canvas, shadowCenter, shadowSide,
+      workId: null, key: '', aspect: NaN, art: DEFAULT_ART, index: -1, shown: true,
+    };
+    btn.addEventListener('click', () => {
+      if (slot.index >= 0) this.handlers.go?.(slot.index, fromThumb);
+    });
+    this.hide(slot);
+    return slot;
+  }
+
+  /** 当前可点、可 Tab 的缩略图（可见度 > 0.5），按上排、下排的顺序 */
+  liveThumbs(): HTMLElement[] {
+    return this.thumbs.filter((t) => t.index >= 0 && t.node.el.tabIndex === 0).map((t) => t.node.el);
+  }
+
+  private hide(slot: Slot): void {
+    if (!slot.shown) return;
+    slot.shown = false;
+    slot.node.set('visibility', 'hidden');
+    slot.node.set('pointer-events', 'none');
+  }
+
+  /** 换作品 / 图片到位 / 读图失败时重新填充内容；比例变了才改卡片宽高 */
+  private fill(slot: Slot, w: Work, src: string | undefined, sizeOf: (aspect: number) => ArtSize): void {
+    slot.workId = w.id;
+    const key = artKey(w, src);
+    if (key !== slot.key) {
+      slot.key = key;
+      const original = src !== undefined && src !== w.thumb;
+      fillArt(slot.canvas, w, src, () => this.handlers.artError?.(w.id, original, src ?? ''));
+    }
+    const aspect = aspectOf(w);
+    if (!(aspect === slot.aspect || (Number.isNaN(aspect) && Number.isNaN(slot.aspect)))) {
+      slot.aspect = aspect;
+      const a = sizeOf(aspect);
+      slot.art = a;
+      const st = slot.node.el.style;
+      st.width = U(a.w);
+      st.height = U(a.h);
+      st.marginLeft = U(-a.w / 2);
+      st.marginTop = U(-a.h / 2);
+    }
+  }
+
+  private ensureThumbs(count: number): void {
+    const camera = this.camera.el;
+    while (this.thumbs.length < count) {
+      const slot = this.makeSlot('thumb', true);
+      const btn = slot.node.el;
+      btn.addEventListener('pointerenter', () => {
+        if (slot.workId) this.handlers.thumbHover?.(slot.workId);
+      });
+      btn.addEventListener('pointerleave', () => this.handlers.thumbHover?.(null));
+      camera.append(btn);
+      this.thumbs.push(slot);
+    }
+  }
+
+  render(f: StageFrame): void {
+    const { works, pos } = f;
+    const n = works.length;
+
+    if (f.grabbing !== this.grabbing) {
+      this.grabbing = f.grabbing;
+      this.section.classList.toggle('is-grabbing', f.grabbing);
+    }
+
+    // 镜头
+    const tilt = f.reduced ? 0 : cameraTilt(f.zoomV);
+    this.camera.set('transform', `perspective(1800px) rotateX(${r3(tilt)}deg) scale(${r3(cameraScale(f.zoom))})`);
+
+    // 画作：先给已经在池子里的作品保留原节点，再把空节点分给新进入范围的作品
+    const inp: PaintingInput = {
+      press: clamp(f.press, -0.2, 1.2),
+      pxN: clamp(f.ox / 80, -1, 1),
+      pyN: clamp(f.oy / 50, -1, 1),
+      vel: f.reduced ? 0 : clamp(f.posV, -12, 12),
+    };
+    const lo = Math.max(0, Math.ceil(pos - RENDER_RANGE));
+    const hi = Math.min(n - 1, Math.floor(pos + RENDER_RANGE));
+    const sinkers = this.sinkers;
+    sinkers.length = 0;
+    const behind = this.behind;
+    behind.length = 0;
+    const claimed = this.claimed;
+    claimed.length = 0;
+    for (let i = 0; i < CARD_POOL; i++) claimed.push(false);
+    const pending: number[] = [];
+    for (let i = lo; i <= hi; i++) {
+      const k = this.cards.findIndex((c, j) => !claimed[j] && c.workId === works[i].id);
+      if (k >= 0) {
+        claimed[k] = true;
+        this.cards[k].index = i;
+      } else pending.push(i);
+    }
+    for (const i of pending) {
+      const k = claimed.indexOf(false);
+      if (k < 0) break;
+      claimed[k] = true;
+      this.cards[k].index = i;
+    }
+    for (let k = 0; k < CARD_POOL; k++) {
+      const slot = this.cards[k];
+      if (!claimed[k]) {
+        slot.index = -1;
+        this.hide(slot);
+        continue;
+      }
+      const i = slot.index;
+      const w = works[i];
+      const src = f.hiRes && f.hiRes.id === w.id ? f.hiRes.url : w.thumb;
+      this.fill(slot, w, src, artSize);
+      const p = paintingAt(i - pos, inp, slot.art);
+      if (!p) {
+        this.hide(slot);
+        continue;
+      }
+      collectSinker(p, sinkers);
+      if (p.opacity <= 0.001) {
+        this.hide(slot);
+        continue;
+      }
+      // z < 10 的画作在玻璃下面，会出现在玻璃格的背景里
+      if (p.z < 10) behind.push({ x: p.x, y: p.y, hw: (slot.art.w / 2) * p.s, hh: (slot.art.h / 2) * p.s });
+      const node = slot.node;
+      if (!slot.shown) {
+        slot.shown = true;
+        node.set('visibility', 'visible');
+      }
+      node.set(
+        'transform',
+        `perspective(1400px) translate3d(${U(p.x)}, ${U(p.y)}, 0) rotateY(${r3(p.ry)}deg) rotateX(${r3(p.rx)}deg) scale(${r3(p.s)})`,
+      );
+      node.set('opacity', String(r3(p.opacity)));
+      node.set(
+        'filter',
+        p.blur < 0.05 && p.brightness > 0.999 ? 'none' : `brightness(${r3(p.brightness)}) blur(${r3(p.blur)}px)`,
+      );
+      // 阴影：§7.1 的 sh 在中间（0.30）和侧边（0.16）两档之间线性变化，
+      // 这里用两层固定阴影交叉淡入淡出来表达，只改透明度（合成层，不重绘）
+      const sw = shadowWeights(Math.abs(i - pos));
+      slot.shadowCenter!.set('opacity', String(r3(sw.center)));
+      slot.shadowSide!.set('opacity', String(r3(sw.side)));
+      node.set('z-index', String(p.z));
+      node.set('pointer-events', p.opacity > 0.3 ? 'auto' : 'none');
+      const title = displayTitle(w);
+      node.attr('aria-label', i === f.cur ? t('card.current', { title }) : t('card.view', { title }));
+    }
+
+    // 玻璃避让
+    const mot = clamp(f.mot, 0, 1);
+    // 背景模糊的影响范围（u）：玻璃模糊半径 + 画作自身最多 6px 模糊，再留 1u 余量
+    const uPx = Math.min(window.innerHeight / 100, window.innerWidth * 0.006) || 1;
+    const margin = (GLASS_BLUR_PX + 6) / uPx + 1;
+    for (const tile of this.tiles) {
+      const a = tileAvoid(tile.tx, tile.ty, sinkers, mot);
+      const node = tile.node;
+      // 完全让开的格子直接隐藏，省掉它的背景模糊（backdrop-filter）
+      node.set('visibility', a.f > 0.98 ? 'hidden' : 'visible');
+      // 背后只有纯色背景的格子关掉模糊：结果一样，省下一次模糊计算
+      const blur = tileNeedsBackdrop(tile.tx, tile.ty, behind, margin) ? 'var(--glass-blur)' : 'none';
+      node.set('backdrop-filter', blur);
+      node.set('-webkit-backdrop-filter', blur);
+      node.set('opacity', String(r3(tileOpacity(tile.edge, a.f))));
+      node.set('border-radius', U(tileRadius(a.f)));
+      if (a.f > 0.001) {
+        node.set('transform', `scale(${r3(1 - a.f)})`);
+        node.set('transform-origin', `${r3(a.ox)}% ${r3(a.oy)}%`);
+      } else {
+        node.set('transform', 'none');
+      }
+    }
+
+    // 系列缩略图
+    const zc = clamp(f.zoom, 0, 1);
+    const count = f.members.length;
+    if (count > 0 && zc > 0.001) this.ensureThumbs(count);
+    for (let k = 0; k < this.thumbs.length; k++) {
+      const slot = this.thumbs[k];
+      if (k >= count) {
+        slot.index = -1;
+        this.hide(slot);
+        continue;
+      }
+      const wi = f.members[k];
+      const w = works[wi];
+      slot.index = wi;
+      const hov = f.hoverThumb === w.id;
+      const tf = thumbAt(k, count, zc, f.fade, hov);
+      if (tf.opacity <= 0.001) {
+        this.hide(slot);
+        slot.node.attr('tabindex', '-1');
+        continue;
+      }
+      this.fill(slot, w, w.thumb, thumbSize);
+      slot.node.attr('aria-label', t('thumb.view', { title: displayTitle(w), date: w.date || t('date.unknown') }));
+      const node = slot.node;
+      if (!slot.shown) {
+        slot.shown = true;
+        node.set('visibility', 'visible');
+      }
+      node.set('transform', `translate3d(${U(tf.x)}, ${U(tf.y)}, 0) scale(${r3(tf.s)})`);
+      node.set('opacity', String(r3(tf.opacity)));
+      node.set('filter', 1 - tf.e < 0.01 ? 'none' : `blur(${r3(tf.blur)}px)`);
+      node.set('box-shadow', hov ? shadow['shadow-thumb-hover'] : shadow['shadow-thumb']);
+      const live = tf.opacity > 0.5;
+      node.set('pointer-events', live ? 'auto' : 'none');
+      node.attr('tabindex', live ? '0' : '-1');
+    }
+  }
+}

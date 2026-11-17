@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>插画预览 · 交互原型</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;family=Noto+Sans+SC:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="position: relative; width: 100%; height: 100vh; min-height: 560px; overflow: hidden; background: #D5D5D3; color: #161616; font-family: Inter, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif; -webkit-user-select: none; user-select: none; touch-action: none" onPointerMove="{{ onMove }}" onPointerUp="{{ onUp }}" onPointerCancel="{{ onUp }}">
+
+<section aria-label="画作舞台：左右拖动或方向键切换画作，向下拖动或下方向键拉远镜头查看同系列" tabIndex="0" onPointerDown="{{ onDown }}" onWheel="{{ onWheel }}" onKeyDown="{{ onKey }}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; z-index: 2; cursor: {{cursor}}">
+<div style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: {{camTransform}}; transform-origin: 50% 50%">
+
+<div aria-hidden="true" style="position: absolute; left: 50%; top: 50%; width: {{grid.w}}; height: {{grid.h}}; margin-left: {{grid.ml}}; margin-top: {{grid.mt}}; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(5, minmax(0, 1fr)); gap: {{grid.gap}}; z-index: 10; pointer-events: none">
+<sc-for list="{{ tiles }}" as="t" hint-placeholder-count="40">
+<div style="box-sizing: border-box; border-radius: {{t.r}}; background: {{t.bg}}; backdrop-filter: {{t.filter}}; -webkit-backdrop-filter: {{t.filter}}; border: 1px solid {{t.border}}; box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.03); opacity: {{t.op}}; transform: {{t.transform}}; transform-origin: {{t.origin}}"></div>
+</sc-for>
+</div>
+
+<sc-for list="{{ thumbs }}" as="th" hint-placeholder-count="4">
+<button type="button" aria-label="{{th.label}}" tabIndex="{{th.tab}}" onClick="{{th.go}}" onPointerEnter="{{th.enter}}" onPointerLeave="{{th.leave}}" style="position: absolute; left: 50%; top: 50%; width: {{th.w}}; height: {{th.h}}; margin-left: {{th.ml}}; margin-top: {{th.mt}}; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: {{th.bg}}; cursor: pointer; transform: {{th.transform}}; opacity: {{th.opacity}}; filter: {{th.filter}}; box-shadow: {{th.shadow}}; z-index: 30; pointer-events: {{th.pe}}">
+<sc-for list="{{ th.shapes }}" as="s" hint-placeholder-count="4">
+<span style="position: absolute; left: {{s.l}}%; top: {{s.t}}%; width: {{s.w}}%; height: {{s.h}}%; border-radius: {{s.r}}; background: {{s.c}}; transform: rotate({{s.rot}}deg)"></span>
+</sc-for>
+<span style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; border-radius: 10px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.4)"></span>
+</button>
+</sc-for>
+
+<sc-for list="{{ cards }}" as="c" hint-placeholder-count="5">
+<button type="button" aria-label="{{c.label}}" tabIndex="-1" onClick="{{c.go}}" style="position: absolute; left: 50%; top: 50%; width: {{c.w}}; height: {{c.h}}; margin-left: {{c.ml}}; margin-top: {{c.mt}}; padding: 0; border: 0; border-radius: 14px; overflow: hidden; background: {{c.bg}}; cursor: inherit; transform: {{c.transform}}; opacity: {{c.opacity}}; filter: {{c.filter}}; box-shadow: {{c.shadow}}; z-index: {{c.z}}; pointer-events: {{c.pe}}">
+<sc-for list="{{ c.shapes }}" as="s" hint-placeholder-count="4">
+<span style="position: absolute; left: {{s.l}}%; top: {{s.t}}%; width: {{s.w}}%; height: {{s.h}}%; border-radius: {{s.r}}; background: {{s.c}}; transform: rotate({{s.rot}}deg)"></span>
+</sc-for>
+<span style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; border-radius: 14px; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35)"></span>
+</button>
+</sc-for>
+
+</div>
+</section>
+
+<div data-tauri-drag-region="" aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 100%; height: 40px; z-index: 4"></div>
+
+<div style="position: absolute; left: 28px; top: 28px; z-index: 6; display: flex; align-items: baseline; gap: 12px; pointer-events: none">
+<span style="font-size: 15px; font-weight: 600; letter-spacing: 0.02em">插画预览</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #3D3D3D">{{idxLabel}}</span>
+</div>
+
+<div aria-hidden="true" style="position: absolute; left: 28px; top: 50%; margin-top: -90px; width: 44px; height: 180px; display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: {{meter.o}}; transition: opacity 300ms ease; z-index: 6; pointer-events: none">
+<span style="font-size: 12px; color: #3D3D3D">近</span>
+<div style="position: relative; width: 4px; flex-grow: 1; border-radius: 999px; background: rgba(22,22,22,0.12); overflow: hidden">
+<div style="position: absolute; left: 0; top: 0; width: 100%; height: {{meter.h}}; border-radius: 999px; background: #161616"></div>
+</div>
+<span style="font-size: 12px; color: #3D3D3D">远</span>
+</div>
+
+<div style="position: absolute; left: 50%; top: {{hdr.top}}; transform: translate(-50%, calc(-100% + {{hdr.ty}}px)); opacity: {{hdr.o}}; pointer-events: {{hdr.pe}}; z-index: 6; display: flex; align-items: center; gap: 10px; height: 44px; box-sizing: border-box; padding: 0 0 0 18px; background: #FFFFFF; border-radius: 999px; box-shadow: 0 18px 36px -16px rgba(38,30,12,0.3), 0 2px 6px rgba(0,0,0,0.06); white-space: nowrap">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: {{hdr.color}}"></span>
+<span style="font-size: 14px; font-weight: 600">{{hdr.name}}</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C5C5C">{{hdr.count}} 幅</span>
+<button type="button" onClick="{{ startEdit }}" aria-label="编辑系列标签" style="width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #161616; display: inline-flex; align-items: center; justify-content: center; cursor: pointer">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+</button>
+</div>
+
+<aside aria-label="作品信息" style="position: absolute; top: 24px; right: 24px; width: min(300px, calc(100% - 48px)); box-sizing: border-box; padding: 18px 20px 20px; background: #FFFFFF; border-radius: 24px; box-shadow: 0 24px 48px -18px rgba(38,30,12,0.28), 0 2px 6px rgba(0,0,0,0.06); z-index: 6">
+<sc-if value="{{ notEditing }}" hint-placeholder-val="{{ true }}">
+<div style="transform: translateX({{info.tx}}px); opacity: {{info.o}}">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+<span style="display: inline-flex; align-items: center; gap: 8px; height: 30px; box-sizing: border-box; padding: 0 12px 0 10px; border-radius: 999px; background: #F2F2F0; font-size: 13px; font-weight: 500">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: {{info.seriesColor}}"></span>{{info.seriesName}}</span>
+<button type="button" onClick="{{ startEdit }}" aria-label="编辑系列标签" style="width: 44px; height: 44px; margin: -7px -10px -7px 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #161616; display: inline-flex; align-items: center; justify-content: center; cursor: pointer">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+</button>
+</div>
+<h1 style="margin: 14px 0 4px; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.01em">{{info.title}}</h1>
+<p style="margin: 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #5C5C5C">{{info.date}}</p>
+</div>
+<div style="height: 1px; background: #EDEDEB; margin: 16px 0 12px"></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: #5C5C5C">
+<span>同系列 {{info.count}} 幅</span>
+<span>向下拖动查看全部</span>
+</div>
+</sc-if>
+<sc-if value="{{ editing }}" hint-placeholder-val="{{ false }}">
+<div>
+<label for="series-name" style="display: block; margin-bottom: 8px; font-size: 12px; color: #5C5C5C">系列标签</label>
+<input id="series-name" type="text" value="{{edit.name}}" onChange="{{ onRename }}" onKeyDown="{{ onRenameKey }}" autoFocus="{{ true }}" maxLength="16" placeholder="输入系列名" style="width: 100%; height: 44px; box-sizing: border-box; padding: 0 14px; border: 1px solid #D4D4D2; border-radius: 12px; background: #FAFAF9; color: #161616; font-family: inherit; font-size: 15px; -webkit-user-select: text; user-select: text; outline-color: #161616">
+<p style="margin: 16px 0 8px; font-size: 12px; color: #5C5C5C">「{{edit.title}}」归入系列</p>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<sc-for list="{{ chips }}" as="ch" hint-placeholder-count="3">
+<button type="button" onClick="{{ch.pick}}" aria-pressed="{{ch.pressed}}" style="height: 44px; box-sizing: border-box; padding: 0 14px; border-radius: 999px; border: 1px solid {{ch.border}}; background: {{ch.bg}}; color: {{ch.fg}}; display: inline-flex; align-items: center; gap: 8px; font-family: inherit; font-size: 13px; cursor: pointer">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: {{ch.color}}"></span>{{ch.name}}</button>
+</sc-for>
+<button type="button" onClick="{{ newSeries }}" style="height: 44px; box-sizing: border-box; padding: 0 14px; border-radius: 999px; border: 1px dashed #A8A8A6; background: transparent; color: #3D3D3D; font-family: inherit; font-size: 13px; cursor: pointer">+ 新建系列</button>
+</div>
+<button type="button" onClick="{{ finishEdit }}" style="margin-top: 16px; width: 100%; height: 44px; border: 0; border-radius: 14px; background: #161616; color: #FFFFFF; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer">完成</button>
+</div>
+</sc-if>
+</aside>
+
+<div aria-hidden="true" style="position: absolute; left: 50%; bottom: 108px; transform: translateX(-50%); opacity: {{hintO}}; transition: opacity 600ms ease; display: flex; gap: 22px; font-size: 13px; color: #3D3D3D; z-index: 6; pointer-events: none; white-space: nowrap">
+<span>⟷　按住左右拖动 · 浏览时间轴</span>
+<span>↓　按住向下拖动 · 拉远看同系列</span>
+</div>
+
+<nav aria-label="时间轴" style="position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(760px, calc(100% - 48px)); height: 64px; box-sizing: border-box; padding: 0 10px; display: flex; align-items: center; gap: 8px; background: #FFFFFF; border-radius: 999px; box-shadow: 0 20px 40px -18px rgba(38,30,12,0.3), 0 2px 6px rgba(0,0,0,0.06); z-index: 6">
+<button type="button" onClick="{{ prev }}" aria-label="上一幅" style="flex-shrink: 0; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: #F2F2F0; color: #161616; display: inline-flex; align-items: center; justify-content: center; cursor: pointer">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+</button>
+<div style="position: relative; flex-grow: 1; height: 44px; margin: 0 16px">
+<div style="position: absolute; left: 0; top: 22px; width: 100%; height: 1px; background: #E4E4E2"></div>
+<sc-for list="{{ ticks }}" as="tk" hint-placeholder-count="12">
+<button type="button" aria-label="{{tk.label}}" onClick="{{tk.go}}" style="position: absolute; left: {{tk.left}}; top: 0; width: 28px; height: 44px; margin-left: -14px; padding: 0; border: 0; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center">
+<span style="width: 2px; height: {{tk.h}}px; border-radius: 2px; background: {{tk.c}}"></span>
+</button>
+<sc-if value="{{ tk.hasYear }}" hint-placeholder-val="{{ false }}">
+<span style="position: absolute; left: {{tk.left}}; top: -6px; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #5C5C5C; pointer-events: none">{{tk.year}}</span>
+</sc-if>
+</sc-for>
+<div aria-hidden="true" style="position: absolute; left: {{ind.left}}; top: 18px; width: {{ind.w}}px; height: 8px; margin-left: {{ind.ml}}px; border-radius: 999px; background: {{accent}}; box-shadow: 0 0 0 3px #FFFFFF, 0 2px 8px rgba(120,90,0,0.35); pointer-events: none"></div>
+</div>
+<button type="button" onClick="{{ next }}" aria-label="下一幅" style="flex-shrink: 0; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: #F2F2F0; color: #161616; display: inline-flex; align-items: center; justify-content: center; cursor: pointer">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"></path></svg>
+</button>
+</nav>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#F2D000","options":["#F2D000","#FF8A3D","#5FB4E8","#B48CF2"],"section":"视觉"},"glass":{"editor":"range","default":0.5,"min":0,"max":1,"step":0.05,"section":"视觉"},"feel":{"editor":"enum","default":"标准","options":["柔和","标准","灵敏"],"section":"动效"},"showHints":{"editor":"boolean","default":true,"section":"动效"},"initialPos":{"editor":null},"initialZoom":{"editor":null},"initialEditing":{"editor":null},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(...args) {
+    super(...args);
+    const p = this.props || args[0] || {};
+    const num = (v) => { const x = typeof v === 'number' ? v : parseFloat(v); return isFinite(x) ? x : null; };
+    const data = this.seed();
+    const n = data.works.length;
+    const ip = num(p.initialPos);
+    const iz = num(p.initialZoom);
+    const pos0 = ip === null ? 3 : Math.max(0, Math.min(n - 1, ip));
+    const z0 = iz === null ? 0 : Math.max(0, Math.min(1, iz));
+    this.m = {
+      pos: pos0, posT: pos0, posV: 0,
+      zoom: z0, zoomT: z0, zoomV: 0,
+      press: 0, pressV: 0,
+      ox: 0, oy: 0, oxT: 0, oyT: 0, hp: 0,
+      mot: (ip !== null && Math.abs(pos0 - Math.round(pos0)) > 0.01) ? 1 : 0
+    };
+    this.drag = null;
+    this.raf = 0;
+    this.last = 0;
+    this.dragEndAt = 0;
+    this.wheelAcc = 0;
+    this.wheelAccY = 0;
+    this.wheelAt = 0;
+    this.hoverThumb = null;
+    this.navMove = false;
+    const hintsOff = p.showHints === false || p.showHints === 'false';
+    this.state = {
+      works: data.works,
+      series: data.series,
+      editing: p.initialEditing === true || p.initialEditing === 'true',
+      touched: hintsOff || z0 > 0,
+      axis: null,
+      frame: 0
+    };
+    this.step = this.step.bind(this);
+    ['onDown', 'onMove', 'onUp', 'onWheel', 'onKey', 'onRename', 'onRenameKey', 'startEdit', 'finishEdit', 'newSeries', 'prev', 'next'].forEach((k) => { this[k] = this[k].bind(this); });
+  }
+
+  seed() {
+    const S = (l, t, w, h, c, r, rot) => ({ l: l, t: t, w: w, h: h, c: c, r: r || '0', rot: rot || 0 });
+    const series = [
+      { id: 's1', name: '夏日', color: '#D9A400' },
+      { id: 's2', name: '夜行', color: '#4A5A86' },
+      { id: 's3', name: '植物志', color: '#6E8B5B' }
+    ];
+    const works = [
+      { id: 'w01', title: '海边清晨', date: '2025.03.08', series: 's1', bg: '#F3E7CF', shapes: [S(56, 14, 28, 22.4, '#EDB62A', '50%'), S(-10, 56, 120, 50, '#7FA7B5'), S(-10, 66, 120, 40, '#5E8C9E'), S(-24, 80, 84, 40, '#E8CFA0', '50%')] },
+      { id: 'w02', title: '窗台绿植', date: '2025.04.19', series: 's3', bg: '#E6E9DE', shapes: [S(14, 10, 72, 46, '#F6F4EC', '4%'), S(49, 10, 2, 46, '#D7D9CF'), S(14, 32, 72, 2, '#D7D9CF'), S(0, 86, 100, 14, '#CFC8B4'), S(28, 44, 22, 32, '#6E8B5B', '50% 0', -28), S(48, 40, 22, 34, '#8FAA74', '0 50%', 22), S(34, 68, 32, 20, '#C77B54', '0 0 30% 30%')] },
+      { id: 'w03', title: '末班电车', date: '2025.05.27', series: 's2', bg: '#1E2740', shapes: [S(0, 30, 100, 0.6, '#4A5A86'), S(70, 12, 7, 5.6, '#F1E6B8', '50%'), S(0, 78, 100, 22, '#151C30'), S(0, 76, 100, 1.2, '#5A678F'), S(46, 30, 1, 16, '#5A678F'), S(8, 46, 84, 28, '#E4B93C', '10% 10% 4% 4%'), S(14, 51, 72, 10, '#2C3655', '3%')] },
+      { id: 'w04', title: '午后的窗', date: '2025.06.14', series: 's1', bg: '#F1E3C2', shapes: [S(0, 80, 100, 20, '#C9A27A'), S(16, 20, 40, 46, '#F8EED6', '2%', -6), S(35, 20, 2, 46, '#E3CFA4', '0', -6), S(52, 60, 32, 25.6, '#EDB62A', '50%'), S(72, 0, 28, 100, '#D9A24A', '0 0 0 60%')] },
+      { id: 'w05', title: '霓虹街角', date: '2025.07.30', series: 's2', bg: '#20253B', shapes: [S(6, 22, 40, 78, '#2E3B5E'), S(52, 36, 42, 64, '#3D4C73'), S(12, 30, 8, 26, '#5FD0C9', '999px'), S(58, 44, 28, 8, '#E35D8C', '999px'), S(14, 62, 6, 6, '#E4B93C'), S(28, 62, 6, 6, '#E4B93C'), S(64, 62, 6, 6, '#E4B93C'), S(0, 90, 100, 10, '#161A2A')] },
+      { id: 'w06', title: '蕨', date: '2025.08.21', series: 's3', bg: '#EEF0E6', shapes: [S(0, 86, 100, 14, '#D9DCCB'), S(49, 16, 1.6, 72, '#5D7A4C', '0', 4), S(30, 22, 20, 7, '#7E9C66', '50%', -30), S(51, 26, 20, 7, '#7E9C66', '50%', 30), S(28, 36, 22, 8, '#93AE79', '50%', -25), S(51, 40, 22, 8, '#93AE79', '50%', 25), S(26, 50, 24, 9, '#7E9C66', '50%', -20), S(51, 54, 24, 9, '#7E9C66', '50%', 20), S(30, 66, 20, 8, '#93AE79', '50%', -15), S(51, 68, 20, 8, '#93AE79', '50%', 15)] },
+      { id: 'w07', title: '八月的浪', date: '2025.09.03', series: 's1', bg: '#CFE3E6', shapes: [S(66, 10, 20, 16, '#EDB62A', '50%'), S(-20, 42, 92, 72, '#4F8FA3', '50%'), S(28, 54, 104, 70, '#2F6F86', '50%'), S(8, 46, 30, 6, '#F4F1E6', '999px'), S(52, 56, 26, 5, '#F4F1E6', '999px')] },
+      { id: 'w08', title: '屋顶月亮', date: '2025.10.16', series: 's2', bg: '#1B2238', shapes: [S(58, 12, 26, 20.8, '#F1E6B8', '50%'), S(20, 20, 2, 1.6, '#F1E6B8', '50%'), S(40, 30, 1.6, 1.3, '#F1E6B8', '50%'), S(-8, 58, 62, 54, '#2E3B5E', '0', -12), S(40, 64, 72, 54, '#3D4C73', '0', 10), S(24, 72, 8, 7, '#E4B93C'), S(70, 76, 7, 6, '#E4B93C')] },
+      { id: 'w09', title: '落日沙丘', date: '2025.12.05', series: 's1', bg: '#F3D9B8', shapes: [S(30, 28, 40, 32, '#E98F3A', '50%'), S(-30, 52, 112, 70, '#D9A06A', '50%'), S(22, 62, 112, 70, '#C27F4B', '50%')] },
+      { id: 'w10', title: '龟背竹', date: '2026.02.11', series: 's3', bg: '#E4E8DC', shapes: [S(49, 62, 2, 24, '#5E7F50'), S(16, 14, 68, 54, '#5E7F50', '50% 50% 50% 12%', -10), S(38, 28, 3, 28, '#E4E8DC', '0', -32), S(56, 30, 3, 26, '#E4E8DC', '0', -40), S(28, 40, 3, 20, '#E4E8DC', '0', -20), S(34, 84, 32, 16, '#B9B2A0', '0 0 22% 22%')] },
+      { id: 'w11', title: '雨夜便利店', date: '2026.04.09', series: 's2', bg: '#1C2236', shapes: [S(20, 6, 0.8, 14, '#4A5A86', '0', 15), S(44, 10, 0.8, 14, '#4A5A86', '0', 15), S(70, 4, 0.8, 14, '#4A5A86', '0', 15), S(84, 20, 0.8, 12, '#4A5A86', '0', 15), S(10, 40, 80, 48, '#2B3555'), S(16, 50, 68, 28, '#EDE3B8'), S(6, 36, 88, 8, '#5FA3C9', '3%'), S(0, 88, 100, 12, '#232B45'), S(22, 91, 56, 3, '#6B6A5A', '999px')] },
+      { id: 'w12', title: '夏至', date: '2026.06.21', series: 's1', bg: '#F7EBC4', shapes: [S(20, 12, 60, 48, '#F2C230', '50%'), S(-10, 64, 120, 44, '#9DB26A', '45% 45% 0 0'), S(-10, 76, 120, 30, '#7F9A55')] }
+    ];
+    return { series: series, works: works };
+  }
+
+  componentWillUnmount() {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  feel() {
+    const f = (this.props || {}).feel;
+    if (f === '柔和') return [120, 22];
+    if (f === '灵敏') return [300, 28];
+    return [170, 22];
+  }
+
+  rub(o) { return 0.55 * (1 - 1 / (1 + o * 0.9)); }
+
+  kick() {
+    if (!this.raf) this.raf = requestAnimationFrame(this.step);
+  }
+
+  step(now) {
+    this.raf = 0;
+    const m = this.m;
+    let dt = this.last ? (now - this.last) / 1000 : 1 / 60;
+    this.last = now;
+    dt = Math.max(0.001, Math.min(dt, 1 / 30));
+    const feel = this.feel();
+    const ax = this.drag ? this.drag.axis : null;
+    const kp = ax === 'x' ? [900, 60] : feel;
+    const kz = ax === 'y' ? [900, 60] : [feel[0] * 0.85, feel[1]];
+    const pt = ax ? 1 : 0;
+    const sub = 4, h = dt / sub;
+    for (let i = 0; i < sub; i++) {
+      let a = -kp[0] * (m.pos - m.posT) - kp[1] * m.posV;
+      m.posV += a * h; m.pos += m.posV * h;
+      a = -kz[0] * (m.zoom - m.zoomT) - kz[1] * m.zoomV;
+      m.zoomV += a * h; m.zoom += m.zoomV * h;
+      a = -320 * (m.press - pt) - 32 * m.pressV;
+      m.pressV += a * h; m.press += m.pressV * h;
+    }
+    const f = 1 - Math.pow(0.86, dt * 60);
+    m.ox += (m.oxT - m.ox) * f;
+    m.oy += (m.oyT - m.oy) * f;
+    if (this.navMove && Math.abs(m.pos - m.posT) <= 0.15) this.navMove = false;
+    const moving = ax === 'x' || this.navMove;
+    m.mot += ((moving ? 1 : 0) - m.mot) * (1 - Math.exp(-dt * (moving ? 18 : 11)));
+    const settled = !this.drag &&
+      Math.abs(m.pos - m.posT) < 1e-4 && Math.abs(m.posV) < 1e-3 &&
+      Math.abs(m.zoom - m.zoomT) < 1e-4 && Math.abs(m.zoomV) < 1e-3 &&
+      Math.abs(m.press) < 1e-3 && Math.abs(m.pressV) < 1e-3 &&
+      Math.abs(m.ox - m.oxT) < 0.02 && Math.abs(m.oy - m.oyT) < 0.02 &&
+      m.mot < 0.002;
+    if (settled) {
+      m.mot = 0;
+      m.pos = m.posT; m.posV = 0; m.zoom = m.zoomT; m.zoomV = 0; m.press = 0; m.pressV = 0;
+      this.last = 0;
+      this.setState({ frame: this.state.frame + 1 });
+      return;
+    }
+    this.setState({ frame: this.state.frame + 1 });
+    this.raf = requestAnimationFrame(this.step);
+  }
+
+  onDown(e) {
+    if (typeof e.button === 'number' && e.button !== 0) return;
+    const m = this.m;
+    m.posT = m.pos; m.zoomT = m.zoom;
+    this.navMove = false;
+    this.drag = {
+      id: e.pointerId, x0: e.clientX, y0: e.clientY,
+      p0: m.pos, z0: m.zoom, axis: null, el: e.currentTarget,
+      samples: [{ t: performance.now(), p: m.pos, z: m.zoom }]
+    };
+    this.kick();
+  }
+
+  onMove(e) {
+    const r = e.currentTarget.getBoundingClientRect();
+    const u = Math.min(r.height / 100, r.width * 0.006) || 1;
+    this.m.oxT = (e.clientX - (r.left + r.width / 2)) / u;
+    this.m.oyT = (e.clientY - (r.top + r.height / 2)) / u;
+    if (!this.m.hp) { this.m.hp = 1; this.m.ox = this.m.oxT; this.m.oy = this.m.oyT; }
+    const d = this.drag;
+    if (d && d.id === e.pointerId) {
+      const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+      if (!d.axis) {
+        if (Math.hypot(dx, dy) < 6) { this.kick(); return; }
+        d.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+        try { d.el.setPointerCapture(e.pointerId); } catch (err) {}
+        this.setState({ axis: d.axis, touched: true });
+      }
+      const n = this.state.works.length;
+      if (d.axis === 'x') {
+        const cs = 1 - 0.42 * Math.max(0, Math.min(1, this.m.zoom));
+        let p = d.p0 - dx / (29 * u * cs);
+        if (p < 0) p = -this.rub(-p);
+        else if (p > n - 1) p = n - 1 + this.rub(p - (n - 1));
+        this.m.posT = p;
+      } else {
+        let z = d.z0 + dy / (r.height * 0.35);
+        if (z < 0) z = -this.rub(-z) * 0.4;
+        else if (z > 1) z = 1 + this.rub(z - 1) * 0.4;
+        this.m.zoomT = z;
+      }
+      const now = performance.now();
+      d.samples.push({ t: now, p: this.m.posT, z: this.m.zoomT });
+      while (d.samples.length > 2 && now - d.samples[0].t > 100) d.samples.shift();
+    }
+    this.kick();
+  }
+
+  onUp(e) {
+    const d = this.drag;
+    if (!d || d.id !== e.pointerId) return;
+    this.drag = null;
+    const m = this.m, n = this.state.works.length;
+    const s = d.samples, a = s[0], b = s[s.length - 1];
+    const dt = Math.max(0.016, (b.t - a.t) / 1000);
+    if (d.axis === 'x') {
+      const v = (b.p - a.p) / dt;
+      const proj = m.posT + Math.max(-3, Math.min(3, v * 0.18));
+      m.posT = Math.max(0, Math.min(n - 1, Math.round(proj)));
+      this.dragEndAt = performance.now();
+    } else if (d.axis === 'y') {
+      const v = (b.z - a.z) / dt;
+      const proj = m.zoomT + v * 0.15;
+      m.zoomT = proj > 0.5 ? 1 : 0;
+      this.dragEndAt = performance.now();
+    } else {
+      m.posT = Math.max(0, Math.min(n - 1, Math.round(m.pos)));
+      m.zoomT = m.zoomT > 0.5 ? 1 : 0;
+    }
+    if (d.axis) this.setState({ axis: null });
+    this.kick();
+  }
+
+  onWheel(e) {
+    const now = performance.now();
+    if (now - this.wheelAt < 380) return;
+    const n = this.state.works.length, m = this.m;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      this.wheelAcc += e.deltaX; this.wheelAccY = 0;
+      if (Math.abs(this.wheelAcc) > 40) {
+        m.posT = Math.max(0, Math.min(n - 1, Math.round(m.posT) + Math.sign(this.wheelAcc)));
+        this.navMove = true;
+        this.wheelAcc = 0; this.wheelAt = now;
+        if (!this.state.touched) this.setState({ touched: true });
+      }
+    } else {
+      this.wheelAccY += e.deltaY; this.wheelAcc = 0;
+      if (Math.abs(this.wheelAccY) > 60) {
+        m.zoomT = this.wheelAccY > 0 ? 1 : 0;
+        this.wheelAccY = 0; this.wheelAt = now;
+        if (!this.state.touched) this.setState({ touched: true });
+      }
+    }
+    this.kick();
+  }
+
+  onKey(e) {
+    const n = this.state.works.length, m = this.m;
+    let hit = true;
+    if (e.key === 'ArrowRight') { m.posT = Math.min(n - 1, Math.round(m.posT) + 1); this.navMove = true; }
+    else if (e.key === 'ArrowLeft') { m.posT = Math.max(0, Math.round(m.posT) - 1); this.navMove = true; }
+    else if (e.key === 'ArrowDown') m.zoomT = 1;
+    else if (e.key === 'ArrowUp' || e.key === 'Escape') m.zoomT = 0;
+    else hit = false;
+    if (hit) {
+      e.preventDefault();
+      if (!this.state.touched) this.setState({ touched: true });
+      this.kick();
+    }
+  }
+
+  go(i, fromThumb) {
+    if (performance.now() - this.dragEndAt < 250) return;
+    this.m.posT = i;
+    this.navMove = true;
+    if (fromThumb) this.m.zoomT = 0;
+    if (!this.state.touched) this.setState({ touched: true });
+    this.kick();
+  }
+
+  prev() { this.go(Math.max(0, Math.round(this.m.posT) - 1), false); }
+  next() { this.go(Math.min(this.state.works.length - 1, Math.round(this.m.posT) + 1), false); }
+
+  curIndex() { return Math.max(0, Math.min(this.state.works.length - 1, Math.round(this.m.posT))); }
+
+  startEdit() { this.setState({ editing: true, touched: true }); }
+
+  finishEdit() {
+    const series = this.state.series.map((s) => (s.name && s.name.trim()) ? s : Object.assign({}, s, { name: '未命名系列' }));
+    this.setState({ editing: false, series: series });
+  }
+
+  onRename(e) {
+    const v = e.target.value;
+    const sid = this.state.works[this.curIndex()].series;
+    const series = this.state.series.map((s) => s.id === sid ? Object.assign({}, s, { name: v }) : s);
+    this.setState({ series: series });
+  }
+
+  onRenameKey(e) {
+    if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); this.finishEdit(); }
+  }
+
+  assign(sid) {
+    const ci = this.curIndex();
+    const works = this.state.works.map((w, i) => i === ci ? Object.assign({}, w, { series: sid }) : w);
+    this.setState({ works: works });
+  }
+
+  newSeries() {
+    const palette = ['#C27F4B', '#5FA3C9', '#8E6FB0', '#C2577A'];
+    const k = this.state.series.length;
+    const id = 's' + Date.now().toString(36);
+    const series = this.state.series.concat([{ id: id, name: '新系列 ' + Math.max(1, k - 2), color: palette[(k - 3 + palette.length * 10) % palette.length] }]);
+    const ci = this.curIndex();
+    const works = this.state.works.map((w, i) => i === ci ? Object.assign({}, w, { series: id }) : w);
+    this.setState({ series: series, works: works });
+  }
+
+  renderVals() {
+    const m = this.m, st = this.state, p = this.props || {};
+    const works = st.works, n = works.length;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    const U = (v) => 'calc(' + r3(v) + ' * min(1vh, 0.6vw))';
+    const accent = p.accent || '#F2D000';
+    const glass = typeof p.glass === 'number' ? p.glass : 0.5;
+    const blurPx = Math.round(12 + glass * 20);
+    const baseA = 0.08 + glass * 0.12;
+    const pos = m.pos, zoom = m.zoom, zc = clamp(zoom, 0, 1);
+    const cs = 1 - 0.42 * zoom;
+    const cur = clamp(Math.round(pos), 0, n - 1);
+    const frac = clamp(pos, 0, n - 1) - cur;
+    const vel = clamp(m.posV, -12, 12);
+    const press = clamp(m.press, -0.2, 1.2);
+    const pxN = clamp(m.ox / 80, -1, 1), pyN = clamp(m.oy / 50, -1, 1);
+    const seriesById = {};
+    st.series.forEach((s) => { seriesById[s.id] = s; });
+    const seriesOf = (w) => seriesById[w.series] || { id: '', name: '未归类', color: '#A3A3A3' };
+
+    const ss = (e0, e1, v) => { const t = clamp((v - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+    const cardW = U(44.8), cardH = U(56), cardML = U(-22.4), cardMT = U(-28);
+    const cards = [];
+    const sinkers = [];
+    works.forEach((w, i) => {
+      const d = i - pos, a = Math.abs(d), sg = d < 0 ? -1 : 1;
+      if (a > 2.65) return;
+      const front = a < 1.5;
+      let x, s, y = 0;
+      if (a <= 1) { x = d * 29; s = 1 - 0.26 * a; }
+      else { x = sg * (29 + (a - 1) * 20); s = Math.max(0.4, 0.74 - 0.19 * (a - 1)); y = (a - 1) * 1.5; }
+      const behind = ss(1.35, 1.5, a) * (1 - ss(2.4, 2.6, a));
+      if (behind > 0.002) sinkers.push({ x: x, y: y, hw: 22.4 * s, hh: 28 * s, k: behind });
+      s *= 1 - 0.035 * press;
+      let op;
+      if (a <= 1.15) op = 1;
+      else if (front) op = 1 - ((a - 1.15) / 0.35) * 0.2;
+      else op = Math.max(0, 0.8 * (1 - (a - 1.5) / 0.95));
+      const blur = a <= 1 ? 0 : (front ? (a - 1) * 12 : 6);
+      const bright = a <= 1 ? 1 - 0.06 * a : 0.94;
+      const nearC = Math.max(0, 1 - a * 2);
+      const ry = -clamp(d, -1, 1) * 10 + pxN * 6 * nearC + clamp(-vel * 1.6, -12, 12);
+      const rx = -pyN * 5 * nearC;
+      const z = front ? 60 - Math.round(a * 20) : 5 - Math.round(a);
+      const sh = a <= 1 ? 0.30 - 0.14 * a : (front ? 0.16 * (1.5 - a) / 0.5 : 0);
+      const am = Math.min(a, 1);
+      const shadow = sh > 0.005
+        ? '0 ' + Math.round(36 - 14 * am) + 'px ' + Math.round(70 - 24 * am) + 'px -12px rgba(38,30,12,' + r3(sh) + '), 0 8px 18px rgba(0,0,0,' + r3(sh * 0.42) + ')'
+        : 'none';
+      const filter = (blur < 0.05 && bright > 0.999) ? 'none' : 'brightness(' + r3(bright) + ') blur(' + r3(blur) + 'px)';
+      cards.push({
+        key: w.id, bg: w.bg, shapes: w.shapes, w: cardW, h: cardH, ml: cardML, mt: cardMT,
+        label: i === cur ? '当前作品：' + w.title : '查看 ' + w.title,
+        transform: 'perspective(1400px) translate3d(' + U(x) + ', ' + U(y) + ', 0) rotateY(' + r3(ry) + 'deg) rotateX(' + r3(rx) + 'deg) scale(' + r3(s) + ')',
+        opacity: r3(op), filter: filter, z: z, shadow: shadow,
+        pe: op > 0.3 ? 'auto' : 'none',
+        go: () => this.go(i, false)
+      });
+    });
+
+    const cols = 8, rows = 5, pitch = 15.8;
+    const mot = clamp(m.mot, 0, 1);
+    const tiles = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const tx = (c - (cols - 1) / 2) * pitch, ty = (r - (rows - 1) / 2) * pitch;
+        let f = 0, ox = 50, oy = 50;
+        if (mot > 0.001) {
+          sinkers.forEach((sk) => {
+            const bx = sk.hw + 7.5, by = sk.hh + 7.5;
+            const gap = Math.max(Math.abs(tx - sk.x) - bx, Math.abs(ty - sk.y) - by);
+            const raw = clamp((3 - gap) / 3, 0, 1) * sk.k * mot;
+            const fi = raw * raw * (3 - 2 * raw);
+            if (fi > f) {
+              f = fi;
+              ox = 50 + 50 * clamp((tx - sk.x) / bx, -1, 1);
+              oy = 50 + 50 * clamp((ty - sk.y) / by, -1, 1);
+            }
+          });
+        }
+        const e = Math.max(Math.abs(c - (cols - 1) / 2) / ((cols - 1) / 2), Math.abs(r - (rows - 1) / 2) / ((rows - 1) / 2));
+        const o = (1 - 0.5 * clamp((e - 0.45) / 0.55, 0, 1)) * (1 - 0.6 * f);
+        tiles.push({
+          key: r + '-' + c,
+          bg: 'rgba(255,255,255,' + r3(baseA) + ')',
+          border: 'rgba(255,255,255,0.5)',
+          filter: 'blur(' + blurPx + 'px) saturate(140%)',
+          r: U(1.16 + f * 6.34),
+          transform: f > 0.001 ? 'scale(' + r3(1 - f) + ')' : 'none',
+          origin: r3(ox) + '% ' + r3(oy) + '%',
+          op: r3(o)
+        });
+      }
+    }
+    const gw = cols * 15 + (cols - 1) * 0.8, gh = rows * 15 + (rows - 1) * 0.8;
+    const grid = { w: U(gw), h: U(gh), ml: U(-gw / 2), mt: U(-gh / 2), gap: U(0.8) };
+
+    const wc = works[cur];
+    const sc = seriesOf(wc);
+    const members = [];
+    works.forEach((w, i) => { if (w.series === wc.series && i !== cur) members.push(i); });
+    const topN = Math.ceil(members.length / 2);
+    const rowFade = clamp(1 - Math.abs(frac) * 2.2, 0, 1);
+    const thumbs = members.map((wi, k) => {
+      const w = works[wi];
+      const row = k < topN ? -1 : 1;
+      const idx = k < topN ? k : k - topN;
+      const cnt = k < topN ? topN : members.length - topN;
+      const x = (idx - (cnt - 1) / 2) * 25;
+      const t = clamp((zc - 0.12 - idx * 0.08 - (row > 0 ? 0.04 : 0)) / 0.55, 0, 1);
+      const e = 1 - Math.pow(1 - t, 3);
+      const hov = this.hoverThumb === w.id;
+      const y = row * (30 + 17 * e) + (hov ? -1.2 : 0);
+      const s = (0.82 + 0.18 * e) * (hov ? 1.05 : 1);
+      const o = e * rowFade;
+      return {
+        key: w.id, bg: w.bg, shapes: w.shapes,
+        w: U(21), h: U(26), ml: U(-10.5), mt: U(-13),
+        label: '查看 ' + w.title + '（' + w.date + '）',
+        tab: o > 0.5 ? 0 : -1,
+        transform: 'translate3d(' + U(x) + ', ' + U(y) + ', 0) scale(' + r3(s) + ')',
+        opacity: r3(o),
+        filter: (1 - e) < 0.01 ? 'none' : 'blur(' + r3((1 - e) * 8) + 'px)',
+        shadow: hov ? '0 26px 40px -14px rgba(38,30,12,0.38), 0 6px 14px rgba(0,0,0,0.12)' : '0 18px 32px -14px rgba(38,30,12,0.3), 0 4px 10px rgba(0,0,0,0.08)',
+        pe: o > 0.5 ? 'auto' : 'none',
+        go: () => this.go(wi, true),
+        enter: () => { this.hoverThumb = w.id; this.forceUpdate(); },
+        leave: () => { if (this.hoverThumb === w.id) { this.hoverThumb = null; this.forceUpdate(); } }
+      };
+    });
+
+    const ho = clamp((zc - 0.4) / 0.5, 0, 1) * rowFade;
+    const hdr = {
+      name: sc.name || '未命名系列', color: sc.color, count: members.length + 1,
+      top: 'calc(50% - 38.5 * min(1vh, 0.6vw))',
+      o: r3(ho), ty: r3((1 - ho) * 12), pe: ho > 0.5 ? 'auto' : 'none'
+    };
+
+    const io = clamp(1 - Math.abs(frac) * 1.7, 0, 1);
+    const info = {
+      title: wc.title, date: wc.date, seriesName: sc.name || '未命名系列', seriesColor: sc.color,
+      count: members.length + 1, tx: r3(-frac * 28), o: r3(io)
+    };
+
+    const ci = clamp(Math.round(m.posT), 0, n - 1);
+    const ew = works[ci], es = seriesOf(ew);
+    const edit = { name: es.name, title: ew.title };
+    const chips = st.series.map((s) => {
+      const sel = s.id === ew.series;
+      return {
+        key: s.id, name: s.name || '未命名系列', color: s.color, pressed: sel,
+        bg: sel ? '#161616' : '#FFFFFF', fg: sel ? '#FFFFFF' : '#161616', border: sel ? '#161616' : '#D4D4D2',
+        pick: () => this.assign(s.id)
+      };
+    });
+
+    let lastYear = '';
+    const ticks = works.map((w, i) => {
+      const yr = w.date.slice(0, 4);
+      const hasYear = yr !== lastYear;
+      lastYear = yr;
+      const isCur = i === cur, same = w.series === wc.series;
+      return {
+        key: w.id, left: r3(n > 1 ? (i / (n - 1)) * 100 : 50) + '%',
+        h: isCur ? 18 : (same ? 12 : 8),
+        c: isCur ? '#161616' : (same ? '#6B6B69' : '#BDBDBB'),
+        label: '跳到 ' + w.title + '，' + w.date,
+        hasYear: hasYear, year: yr,
+        go: () => this.go(i, false)
+      };
+    });
+    const indW = Math.round(clamp(22 + Math.abs(vel) * 3, 22, 48));
+    const ind = { left: r3(clamp(n > 1 ? pos / (n - 1) : 0.5, 0, 1) * 100) + '%', w: indW, ml: -indW / 2 };
+
+    const hintsOff = st.touched || p.showHints === false || p.showHints === 'false';
+
+    return {
+      accent: accent,
+      cursor: st.axis ? 'grabbing' : 'grab',
+      camTransform: 'perspective(1800px) rotateX(' + r3(clamp(-m.zoomV * 4, -6, 6)) + 'deg) scale(' + r3(cs) + ')',
+      grid: grid, tiles: tiles, cards: cards, thumbs: thumbs,
+      hdr: hdr, info: info, edit: edit, chips: chips, ticks: ticks, ind: ind,
+      meter: { o: st.axis === 'y' ? 1 : 0, h: r3(zc * 100) + '%' },
+      hintO: hintsOff ? 0 : 1,
+      idxLabel: String(cur + 1).padStart(2, '0') + ' / ' + String(n).padStart(2, '0'),
+      editing: st.editing, notEditing: !st.editing,
+      onDown: this.onDown, onMove: this.onMove, onUp: this.onUp, onWheel: this.onWheel, onKey: this.onKey,
+      onRename: this.onRename, onRenameKey: this.onRenameKey,
+      startEdit: this.startEdit, finishEdit: this.finishEdit, newSeries: this.newSeries,
+      prev: this.prev, next: this.next
+    };
+  }
+}
+</script>
+</body>
+</html>

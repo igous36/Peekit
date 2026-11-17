@@ -1,0 +1,937 @@
+/* 颜色、玻璃、圆角、阴影、字体变量由 tokens.ts 的 applyTokens() 写到 :root。
+   这里只放静态样式；每帧变化的值（transform / opacity / filter 等）由 JS 写行内样式。 */
+
+:root {
+  /* 舞台单位：1440×900 下约 8.64px */
+  --u: min(1vh, 0.6vw);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* 作者样式里的 display 会盖过 hidden 属性，这里统一兜底 */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+body {
+  color: var(--color-text);
+  font: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-sans);
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* ───────────── 舞台 ───────────── */
+
+/* ⚠️ 从玻璃格往上到舞台的祖先（.glass-grid / .camera / .stage）
+   不能有 opacity、filter、mask、clip-path，否则 backdrop-filter 失效。只用 transform。 */
+.stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: grab;
+  outline: none;
+}
+
+.stage.is-grabbing {
+  cursor: grabbing;
+}
+
+.stage:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--color-text);
+}
+
+.camera {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.glass-grid {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.glass-tile {
+  border-radius: calc(1.16 * var(--u));
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--glass-border);
+  box-shadow: var(--glass-highlight);
+  /* 避让时每帧改 scale：固定栅格比例，只让 GPU 缩放 */
+  will-change: transform;
+}
+
+/* 性能（第 6 阶段实测）：画作、缩略图、镜头每帧都在改 scale，
+   不加 will-change 时 Chromium 会按新比例重新栅格化整张图。
+   will-change: transform 不会形成 backdrop root，不影响玻璃的 backdrop-filter。 */
+.camera {
+  will-change: transform;
+}
+
+.art,
+.thumb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  will-change: transform;
+}
+
+.art {
+  border-radius: var(--radius-art);
+  cursor: inherit;
+}
+
+.thumb {
+  border-radius: var(--radius-tile);
+  overflow: hidden;
+  z-index: 30;
+  cursor: pointer;
+}
+
+.art-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+/* 画作阴影：两层预渲染的固定阴影（中间 / 侧边两档），每帧只改透明度，不重绘 */
+.art-shadow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  will-change: opacity;
+}
+
+.art-shadow--center {
+  box-shadow: var(--shadow-art-center);
+}
+
+.art-shadow--side {
+  box-shadow: var(--shadow-art-side);
+}
+
+.art-canvas > span {
+  position: absolute;
+}
+
+.art-canvas > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* HANDOFF §8 图片读取失败：color-chip 底色 + 一行小字 */
+.art-canvas > .art-broken {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+/* 画作 / 缩略图边缘的一圈细白描边 */
+.art::after,
+.thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.art::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.thumb::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+/* ───────────── 窗口与字标 ───────────── */
+
+.drag-region {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 40px;
+  z-index: 4;
+}
+
+/* 字标跟在左上角菜单按钮后面，和窗口按钮同一行（中心 y = 32） */
+.wordmark {
+  position: absolute;
+  left: 64px;
+  top: 23px;
+  z-index: 6;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.wordmark-name {
+  font: var(--font-wordmark);
+  letter-spacing: 0.02em;
+}
+
+.wordmark-index {
+  font: var(--font-mono);
+  color: var(--color-text-on-bg);
+}
+
+/* ───────────── 左上角菜单（三道杠） ───────────── */
+
+.app-menu {
+  position: absolute;
+  left: 16px;
+  top: 10px;
+  z-index: 7;
+}
+
+.menu-panel {
+  position: absolute;
+  left: 0;
+  top: 48px;
+  min-width: 232px;
+  padding: 6px;
+  background: var(--color-surface);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-panel);
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: 22px 0;
+  visibility: hidden;
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0s linear 140ms;
+}
+
+.app-menu.is-open .menu-panel {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-tile);
+  background: transparent;
+  color: var(--color-text);
+  font: 400 14px/1 var(--font-family-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--color-chip);
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--color-divider);
+}
+
+.menu-caption {
+  padding: 6px 14px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.menu-langs {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px 6px;
+}
+
+.menu-lang {
+  flex: 1;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 400 13px/1 var(--font-family-sans);
+  cursor: pointer;
+}
+
+.menu-lang.is-selected {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+/* ───────────── 窗口按钮 ─────────────
+   贴近窗口顶边（中心 y = 32），图标直接放在灰底上。
+   点击区 44×44，可见的圆底 36px；关闭悬停用黑底白叉，不引入红色。 */
+
+.window-controls {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  z-index: 6;
+  display: flex;
+}
+
+.win-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-on-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.win-btn::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.win-btn svg {
+  position: relative;
+}
+
+.win-btn:hover {
+  color: var(--color-text);
+}
+
+.win-btn:hover::before {
+  background: var(--color-window-btn-hover);
+}
+
+.win-btn--close:hover {
+  color: var(--color-surface);
+}
+
+.win-btn--close:hover::before {
+  background: var(--color-text);
+}
+
+.win-btn:active {
+  transform: scale(0.94);
+}
+
+.win-btn:focus-visible {
+  outline: none;
+}
+
+.win-btn:focus-visible::before {
+  box-shadow: 0 0 0 2px var(--color-text);
+}
+
+/* ───────────── 镜头刻度 ───────────── */
+
+.zoom-meter {
+  position: absolute;
+  left: 28px;
+  top: 50%;
+  margin-top: -90px;
+  width: 44px;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 300ms ease;
+  z-index: 6;
+  pointer-events: none;
+  font: var(--font-caption);
+  color: var(--color-text-on-bg);
+}
+
+.meter-track {
+  position: relative;
+  width: 4px;
+  flex-grow: 1;
+  border-radius: var(--radius-pill);
+  background: var(--color-meter-track);
+  overflow: hidden;
+}
+
+.meter-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-text);
+  transform: translateY(-100%);
+}
+
+/* ───────────── 系列标题胶囊 ───────────── */
+
+/* 性能：这几个界面元素每帧都在变 transform / opacity，给它们自己的合成层，
+   否则每帧都要重绘整个窗口的根层（连带信息卡、时间轴的大阴影） */
+.series-pill,
+.info-slide,
+.tl-indicator-pos,
+.meter-fill {
+  will-change: transform, opacity;
+}
+
+.series-pill {
+  position: absolute;
+  left: 50%;
+  /* 底边对齐 50% − 38.5u，transform 里的 −100% 负责把底边拉到这条线上 */
+  top: calc(50% - 38.5 * var(--u));
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 0 0 18px;
+  background: var(--color-surface);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pill);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% + 12px));
+}
+
+.pill-name {
+  font: var(--font-series);
+}
+
+.pill-count {
+  font: 400 12px/1 var(--font-family-mono);
+  color: var(--color-text-secondary);
+}
+
+/* 系列只有 1 幅时的说明：在胶囊右侧，直接压在灰底上 */
+.pill-note {
+  display: none;
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  font: var(--font-caption);
+  color: var(--color-text-on-bg);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ───────────── 信息卡 ───────────── */
+
+.info {
+  position: absolute;
+  /* HANDOFF 原为 top 24；右上角让给窗口按钮后下移到 68（按钮底边 54，下面留 14） */
+  top: 68px;
+  right: 24px;
+  width: min(300px, calc(100% - 48px));
+  padding: 18px 20px 20px;
+  background: var(--color-surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  z-index: 6;
+}
+
+.info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-chip);
+  font: var(--font-label);
+}
+
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-edit {
+  margin: -7px -10px -7px 0;
+}
+
+.info-title {
+  margin: 14px 0 4px;
+  font: var(--font-title);
+  letter-spacing: -0.01em;
+  /* 超长标题最多 2 行 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.info-date {
+  margin: 0;
+  font: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+
+/* 设了自定义标题时显示的源文件名 */
+.info-source {
+  display: none;
+  margin: 4px 0 0;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.divider {
+  height: 1px;
+  margin: 16px 0 12px;
+  background: var(--color-divider);
+}
+
+.info-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+/* ───────────── 信息卡 · 编辑态（SeriesEditor） ───────────── */
+
+.editor-caption {
+  display: block;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.editor-label {
+  margin-bottom: 8px;
+}
+
+.editor-label--gap {
+  margin-top: 16px;
+}
+
+.editor-pick {
+  margin: 16px 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.series-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-input);
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  font: var(--font-input);
+  -webkit-user-select: text;
+  user-select: text;
+  outline-color: var(--color-text);
+}
+
+.series-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.series-chip,
+.series-new {
+  height: 44px;
+  max-width: 100%;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  font: 400 13px/1.2 var(--font-family-sans);
+  cursor: pointer;
+}
+
+.series-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--color-input-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.series-chip.is-selected {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+.series-new {
+  border: 1px dashed var(--color-dashed);
+  background: transparent;
+  color: var(--color-text-on-bg);
+}
+
+.editor-done {
+  margin-top: 16px;
+  width: 100%;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-art);
+  background: var(--color-text);
+  color: var(--color-surface);
+  font: 500 14px/1 var(--font-family-sans);
+  cursor: pointer;
+}
+
+/* ───────────── 空状态 / 拖放 / 轻提示 ───────────── */
+
+/* 没有作品时：信息卡、时间轴、提示、系列胶囊、序号都隐藏，舞台只剩玻璃网格 */
+.app.is-empty .info,
+.app.is-empty .timeline,
+.app.is-empty .hint,
+.app.is-empty .series-pill,
+.app.is-empty .wordmark-index {
+  display: none;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.empty-card {
+  width: min(440px, calc(100% - 48px));
+  padding: 32px 32px 28px;
+  background: var(--color-surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-panel);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.empty-title {
+  margin: 0 0 6px;
+  font: 600 18px/1.4 var(--font-family-sans);
+}
+
+.empty-or {
+  margin: 0 0 16px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.empty-buttons {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.empty-btn {
+  height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 14px/1 var(--font-family-sans);
+  cursor: pointer;
+}
+
+.empty-btn--primary {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+.empty-formats {
+  margin: 16px 0 0;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(213, 213, 211, 0.6);
+  opacity: 0;
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.drop-overlay.is-visible {
+  opacity: 1;
+}
+
+.drop-frame {
+  position: absolute;
+  inset: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--color-text-on-bg);
+  border-radius: var(--radius-panel);
+  font: 600 18px/1 var(--font-family-sans);
+  color: var(--color-text);
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 108px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 18px;
+  background: var(--color-surface);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-pill);
+  font: 400 13px/1 var(--font-family-sans);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ───────────── 操作提示 ───────────── */
+
+.hint {
+  position: absolute;
+  left: 50%;
+  bottom: 108px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 22px;
+  font: 400 13px/1.4 var(--font-family-sans);
+  color: var(--color-text-on-bg);
+  white-space: nowrap;
+  transition: opacity 600ms ease;
+  z-index: 6;
+  pointer-events: none;
+}
+
+/* ───────────── 时间轴 ───────────── */
+
+.timeline {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  width: min(760px, calc(100% - 48px));
+  height: 64px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--color-surface);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-timeline);
+  z-index: 6;
+}
+
+.tl-step {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-chip);
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tl-track {
+  position: relative;
+  flex-grow: 1;
+  height: 44px;
+  margin: 0 16px;
+}
+
+.tl-line {
+  position: absolute;
+  left: 0;
+  top: 22px;
+  width: 100%;
+  height: 1px;
+  background: var(--color-timeline-line);
+}
+
+.tl-ticks {
+  position: absolute;
+  inset: 0;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 44px;
+  margin-left: -14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tl-mark {
+  width: 2px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--color-tick-other);
+}
+
+.tl-year {
+  position: absolute;
+  top: -6px;
+  transform: translateX(-50%);
+  font: var(--font-mono-year);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+/* 指示条的定位层和轨道一样宽，translateX(p%) 就是沿轨道走 p% */
+.tl-indicator-pos {
+  position: absolute;
+  left: 0;
+  top: 18px;
+  width: 100%;
+  height: 8px;
+  pointer-events: none;
+}
+
+.tl-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  box-shadow: var(--shadow-indicator);
+  transform: translateX(-50%);
+}

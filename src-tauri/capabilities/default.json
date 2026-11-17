@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口权限：基础能力 + 无边框窗口的拖动、双击最大化、右上角窗口按钮 + 本地保存 + 选择文件 / 文件夹",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "store:default",
+    "dialog:allow-open"
+  ]
+}
