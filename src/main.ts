@@ -6,7 +6,7 @@ import '@fontsource/jetbrains-mono/latin-400.css';
 import './styles.css';
 
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { applyTokens } from './tokens';
+import { applyTokens, tokensApplied } from './tokens';
 import { initI18n } from './i18n';
 import { sampleLibrary } from './data/sample';
 import { applyToSample } from './data/library';
@@ -30,6 +30,8 @@ async function boot(): Promise<void> {
 
   const desktop = isTauri();
   if (desktop) {
+    // 自检：设计变量没生效（比如被 CSP 拦了）时界面会整个没有颜色，打到终端里方便定位
+    if (!tokensApplied()) logError('设计变量没有生效（--color-bg 为空），界面会缺少颜色和卡片样式');
     // 前端的未捕获错误打到终端里
     window.addEventListener('error', (e) => logError(`未捕获错误 ${e.message} @ ${e.filename}:${e.lineno}`));
     window.addEventListener('unhandledrejection', (e) => logError(`未处理的 Promise 拒绝 ${String(e.reason)}`));

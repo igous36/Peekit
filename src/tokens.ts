@@ -235,11 +235,27 @@ export function tokenCss(): string {
   return `:root{${declarations(light)}}\n${DARK_SCOPES.join(',')}{${declarations(dark)}}`;
 }
 
+let tokenSheet: CSSStyleSheet | null = null;
+
 /**
  * 把颜色、玻璃、圆角、阴影、字体写成 CSS 变量。
  * 写成一张样式表而不是 :root 的行内样式：行内样式优先级最高，深色模式的规则会盖不过它。
+ *
+ * ⚠️ 必须用“可构造样式表”（CSSStyleSheet + adoptedStyleSheets），不能插 <style> 标签：
+ * 发行版里 Tauri 会往 CSP 的 style-src 加 nonce，有 nonce 时 'unsafe-inline' 失效，
+ * 动态插入的 <style> 会被整个拦掉（0.1.1 第一次打包就因此丢了全部颜色和卡片样式）。
+ * CSSOM 的样式表不受 CSP 限制。开发版不套 CSP，看不出这个问题。
  */
 export function applyTokens(doc: Document = document): void {
+  if (typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in doc) {
+    if (!tokenSheet) {
+      tokenSheet = new CSSStyleSheet();
+      doc.adoptedStyleSheets = [tokenSheet, ...doc.adoptedStyleSheets];
+    }
+    tokenSheet.replaceSync(tokenCss());
+    return;
+  }
+  // 老环境兜底（WebView2 / 现代浏览器都走上面）
   let style = doc.getElementById('peekit-tokens');
   if (!style) {
     style = doc.createElement('style');
@@ -247,4 +263,9 @@ export function applyTokens(doc: Document = document): void {
     doc.head.prepend(style);
   }
   style.textContent = tokenCss();
+}
+
+/** 设计变量是否真的生效了（发行版启动自检用） */
+export function tokensApplied(doc: Document = document): boolean {
+  return getComputedStyle(doc.documentElement).getPropertyValue('--color-bg').trim() !== '';
 }

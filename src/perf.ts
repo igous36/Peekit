@@ -10,6 +10,19 @@ const info = (msg: string) => invoke('log_info', { msg }).catch(() => {});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
 
+/**
+ * 临时加一段 CSS（对照实验用），返回撤掉它的函数。
+ * 用可构造样式表而不是 <style>：发行版的 CSP 会拦掉动态插入的 <style>（见 tokens.ts 的 applyTokens）。
+ */
+function addCss(css: string): () => void {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(css);
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+  return () => {
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter((s) => s !== sheet);
+  };
+}
+
 interface Stats {
   frames: number;
   p50: number;
@@ -150,11 +163,9 @@ export async function runPerfProbe(app: App): Promise<void> {
   ];
   const variantResults: string[] = [];
   for (const [name, css] of variants) {
-    const st = document.createElement('style');
-    st.textContent = css;
-    document.head.append(st);
+    const removeCss = addCss(css);
     const runs = [summarize(await dragOnce(), refresh), summarize(await dragOnce(), refresh)];
-    st.remove();
+    removeCss();
     variantResults.push(`${name}: ${runs.map((s) => `${s.fps}fps(p95 ${s.p95}, 掉帧 ${s.slow}/${s.frames})`).join('  ')}`);
   }
 
@@ -189,11 +200,9 @@ export async function runPerfProbe(app: App): Promise<void> {
     ['推拉 关缩略图模糊', '.thumb{filter:none!important}'],
     ['推拉 关缩略图阴影', '.thumb{box-shadow:none!important}'],
   ] as [string, string][]) {
-    const st = document.createElement('style');
-    st.textContent = css;
-    document.head.append(st);
+    const removeCss = addCss(css);
     const runs = [summarize(await zoomOnce(), refresh), summarize(await zoomOnce(), refresh)];
-    st.remove();
+    removeCss();
     variantResults.push(`${name}: ${runs.map((s) => `${s.fps}fps(p95 ${s.p95}, 掉帧 ${s.slow}/${s.frames})`).join('  ')}`);
   }
 
