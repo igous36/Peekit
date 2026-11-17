@@ -32,6 +32,7 @@ async function boot(): Promise<void> {
   if (desktop) {
     // 自检：设计变量没生效（比如被 CSP 拦了）时界面会整个没有颜色，打到终端里方便定位
     if (!tokensApplied()) logError('设计变量没有生效（--color-bg 为空），界面会缺少颜色和卡片样式');
+    else void invoke('log_info', { msg: '启动自检：设计变量已生效' }).catch(() => {});
     // 前端的未捕获错误打到终端里
     window.addEventListener('error', (e) => logError(`未捕获错误 ${e.message} @ ${e.filename}:${e.lineno}`));
     window.addEventListener('unhandledrejection', (e) => logError(`未处理的 Promise 拒绝 ${String(e.reason)}`));
