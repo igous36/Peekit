@@ -41,6 +41,21 @@ export function svgIcon(paths: string[], size: number): SVGSVGElement {
 export const ICON_PENCIL = ['M12 20h9', 'M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'];
 export const ICON_PREV = ['M15 18l-6-6 6-6'];
 export const ICON_NEXT = ['M9 18l6-6-6-6'];
+export const ICON_CHEVRON_DOWN = ['M6 9l6 6 6-6'];
+export const ICON_CHECK = ['M5 12.5l4.5 4.5L19 7.5'];
+export const ICON_TRASH = ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12', 'M9 7V4h6v3'];
+export const ICON_PLUS = ['M12 5v14', 'M5 12h14'];
+export const ICON_INFO = ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 11v5', 'M12 7.5h.01'];
+export const ICON_COPY = ['M9 9h10v10H9z', 'M5 15V5h10'];
+export const ICON_DOWNLOAD = ['M12 4v11', 'M7 10l5 5 5-5', 'M5 20h14'];
+export const ICON_FOLDER = ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'];
+export const ICON_REMOVE = ['M5 12h14'];
+export const ICON_PALETTE = [
+  'M12 3a9 9 0 1 0 0 18c1.2 0 1.6-.9 1.6-1.6 0-.9-.6-1.3-.6-2.1 0-.9.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.9-4-8.9-9-8.9Z',
+  'M7.5 11.5h.01',
+  'M10 7.5h.01',
+  'M14.5 7.5h.01',
+];
 
 /** 一个元素 + 上次写入的样式值 */
 export class Styled<E extends HTMLElement = HTMLElement> {

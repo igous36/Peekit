@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   paintingAt, collectSinker, tileAvoid, tileCenter, tileEdgeFade, TILE_HALF, GRID_W, GRID_H,
   thumbAt, indicator, currentOf, infoSlide, artSize, thumbSize, shadowWeights, tileNeedsBackdrop, needsOriginalFor,
+  thumbCaps, thumbPage, cameraScale, THUMB_EDGE_PX, THUMB_INFO_GAP_PX,
   type Sinker, type PaintingInput, type ArtSize,
 } from './mapping';
 import { stage } from '../tokens';
@@ -273,5 +274,55 @@ describe('其他映射', () => {
     // 每排居中，中心距 25
     expect(thumbAt(0, 4, 1, 1, false).x).toBe(-12.5);
     expect(thumbAt(1, 4, 1, 1, false).x).toBe(12.5);
+  });
+});
+
+describe('系列缩略图分页（2026-11-17：系列作品多时缩略图显示不出来）', () => {
+  // 1440 × 900，信息卡左边在 1116（right 24 + 宽 300）
+  const caps = thumbCaps(1440, 900, 1116);
+
+  it('每排容量：上排躲开信息卡，下排最多比上排多 2 张，都不出窗口', () => {
+    expect(caps).toEqual({ top: 6, bottom: 8 });
+    const u = 8.64, cs = cameraScale(1);
+    const spacing = 25 * u * cs, half = (stage.thumbW / 2) * 1.05 * u * cs;
+    expect(720 + ((caps.top - 1) / 2) * spacing + half).toBeLessThanOrEqual(1116 - THUMB_INFO_GAP_PX);
+    expect(720 + ((caps.bottom - 1) / 2) * spacing + half).toBeLessThanOrEqual(1440 - THUMB_EDGE_PX);
+    // 窄窗口也至少各放 1 张
+    const tiny = thumbCaps(400, 600, 100);
+    expect(tiny.top).toBeGreaterThanOrEqual(1);
+    expect(tiny.bottom).toBeGreaterThanOrEqual(1);
+  });
+
+  it('放得下：一页全显示，上排一半（和原型一致）', () => {
+    const p = thumbPage([0, 3, 5, 9, 12], 5, caps);
+    expect(p).toEqual({ items: [0, 3, 9, 12], top: 2, page: 0, pages: 1 });
+  });
+
+  it('放不下：按 上排 + 下排 一页切开，默认显示当前那幅所在的页（当前那幅不占位置）', () => {
+    const series = Array.from({ length: 40 }, (_, i) => i * 2);
+    const per = caps.top + caps.bottom; // 14
+    const p0 = thumbPage(series, series[3], caps);
+    expect(p0.pages).toBe(Math.ceil(40 / per));
+    expect(p0.page).toBe(0);
+    expect(p0.items.length).toBe(per - 1);
+    expect(p0.items).not.toContain(series[3]);
+    const p2 = thumbPage(series, series[30], caps);
+    expect(p2.page).toBe(2);
+    expect(p2.items[0]).toBe(series[28]);
+    // 手动翻页：不含当前那幅的页显示满 per 张，上排不超过容量
+    const manual = thumbPage(series, series[3], caps, 1);
+    expect(manual.page).toBe(1);
+    expect(manual.items).toEqual(series.slice(per, per * 2));
+    expect(manual.top).toBeLessThanOrEqual(caps.top);
+    expect(manual.items.length - manual.top).toBeLessThanOrEqual(caps.bottom);
+    expect(thumbPage(series, series[3], caps, 99).page).toBe(p0.pages - 1);
+  });
+
+  it('上排张数可以指定；一排很多时依次出现的间隔压缩，镜头拉到底每张都完全出现', () => {
+    expect(thumbAt(2, 8, 1, 1, false, 3).y).toBeCloseTo(-47);
+    expect(thumbAt(3, 8, 1, 1, false, 3).y).toBeCloseTo(47);
+    for (let k = 0; k < 16; k++) expect(thumbAt(k, 16, 1, 1, false, 8).e).toBeGreaterThan(0.99);
+    // 少的时候还是原型的每张 0.08
+    expect(thumbAt(1, 4, 0.5, 1, false).e).toBeCloseTo(1 - Math.pow(1 - (0.5 - 0.12 - 0.08) / 0.55, 3));
   });
 });

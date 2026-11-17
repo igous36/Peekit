@@ -21,7 +21,7 @@ describe('系列改名', () => {
 
   it(`最多 ${SERIES_NAME_MAX} 个字符`, () => {
     const lib = sampleLibrary();
-    renameSeries(lib, 's1', '一二三四五六七八九十一二三四五六七八');
+    renameSeries(lib, 's1', '一二三四五六七八九十'.repeat(5));
     expect(lib.series[0].name.length).toBe(SERIES_NAME_MAX);
   });
 

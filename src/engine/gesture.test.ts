@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  rubber, lockAxis, dragPosition, pushSample, releasePosition, sampleVelocityX, stageUnit, dragZoom,
-  releaseZoom, type Sample,
+  rubber, lockAxis, dragPosition, pushSample, releasePosition, sampleVelocityX, stageUnit, dragLevel,
+  releaseLevel, levelTargets, cameraLevel, magDragSpan, MAG_DRAG_SPAN, type Sample,
 } from './gesture';
 
 const U = 8.64; // 1440 × 900 下的 u
@@ -84,31 +84,75 @@ describe('松手惯性', () => {
   });
 });
 
-describe('纵向推拉镜头', () => {
+describe('纵向：镜头三级（−1 放大 / 0 单幅 / 1 系列视图）', () => {
   const H = 900;
   const zs = (pairs: [number, number][]): Sample[] => pairs.map(([t, z]) => ({ t, p: 0, z }));
 
-  it('向下拖窗口高度的 35% = 拉远到 1', () => {
-    expect(dragZoom(0, H * 0.35, H)).toBeCloseTo(1);
-    expect(dragZoom(0, H * 0.175, H)).toBeCloseTo(0.5);
-    expect(dragZoom(1, -H * 0.35, H)).toBeCloseTo(0);
+  it('向下拖窗口高度的 35% = 拉远到系列视图；向上拖同样距离 = 放大（2026-11-17 新增）', () => {
+    expect(dragLevel(0, H * 0.35, H)).toBeCloseTo(1);
+    expect(dragLevel(0, H * 0.175, H)).toBeCloseTo(0.5);
+    expect(dragLevel(1, -H * 0.35, H)).toBeCloseTo(0);
+    expect(dragLevel(0, -H * 0.35, H)).toBeCloseTo(-1);
+    expect(dragLevel(-1, H * 0.175, H)).toBeCloseTo(-0.5);
   });
 
-  it('超出 [0, 1] 用橡皮筋 × 0.4（最多 0.22）', () => {
-    expect(dragZoom(0, -H * 0.35, H)).toBeCloseTo(-rubber(1) * 0.4);
-    expect(dragZoom(1, H * 0.35 * 2, H)).toBeCloseTo(1 + rubber(2) * 0.4);
-    expect(dragZoom(1, H * 100, H)).toBeLessThan(1.22);
+  it('档位和镜头 / 放大的换算', () => {
+    expect(levelTargets(0.4)).toEqual({ zoomT: 0.4, magT: 0 });
+    expect(levelTargets(-0.4)).toEqual({ zoomT: 0, magT: 0.4 });
+    expect(cameraLevel(0, 1)).toBe(-1);
+    expect(cameraLevel(1, 0)).toBe(1);
+    expect(cameraLevel(0, 0)).toBe(0);
   });
 
-  it('松手：没速度时 > 0.5 进系列视图，否则回到单幅', () => {
-    expect(releaseZoom(zs([[0, 0.6], [100, 0.6]]), 0.6)).toBe(1);
-    expect(releaseZoom(zs([[0, 0.4], [100, 0.4]]), 0.4)).toBe(0);
+  it('超出 [−1, 1] 用橡皮筋 × 0.4（最多 0.22）', () => {
+    expect(dragLevel(1, H * 0.35 * 2, H)).toBeCloseTo(1 + rubber(2) * 0.4);
+    expect(dragLevel(-1, -H * 0.35 * 2, H)).toBeCloseTo(-1 - rubber(2) * 0.4);
+    expect(dragLevel(1, H * 100, H)).toBeLessThan(1.22);
+    expect(dragLevel(-1, -H * 100, H)).toBeGreaterThan(-1.22);
+  });
+
+  it('松手：没速度时吸附到最近一档（±0.5 为界）', () => {
+    expect(releaseLevel(zs([[0, 0.6], [100, 0.6]]), 0.6, 0)).toBe(1);
+    expect(releaseLevel(zs([[0, 0.4], [100, 0.4]]), 0.4, 0)).toBe(0);
+    expect(releaseLevel(zs([[0, -0.6], [100, -0.6]]), -0.6, 0)).toBe(-1);
+    expect(releaseLevel(zs([[0, -0.4], [100, -0.4]]), -0.4, 0)).toBe(0);
   });
 
   it('松手：按速度投射 0.15s', () => {
     // 0.3 + 3/秒 × 0.15 = 0.75 → 1
-    expect(releaseZoom(zs([[0, 0], [100, 0.3]]), 0.3)).toBe(1);
+    expect(releaseLevel(zs([[0, 0], [100, 0.3]]), 0.3, 0)).toBe(1);
     // 0.7 − 3/秒 × 0.15 = 0.25 → 0
-    expect(releaseZoom(zs([[0, 1], [100, 0.7]]), 0.7)).toBe(0);
+    expect(releaseLevel(zs([[0, 1], [100, 0.7]]), 0.7, 1)).toBe(0);
+    // 向上甩：−0.3 − 3/秒 × 0.15 = −0.75 → 放大
+    expect(releaseLevel(zs([[0, 0], [100, -0.3]]), -0.3, 0)).toBe(-1);
+  });
+
+  it('一次最多离开起点一档：从系列视图甩得再快也只回到单幅', () => {
+    expect(releaseLevel(zs([[0, 1], [100, -0.8]]), -0.8, 1)).toBe(0);
+    expect(releaseLevel(zs([[0, -1], [100, 0.8]]), 0.8, -1)).toBe(0);
+  });
+});
+
+describe('放大查看 / 全屏时的横向拖动（2026-11-17：之前太灵敏，容易切过头）', () => {
+  const pairs = (list: [number, number][]): Sample[] => list.map(([t, p]) => ({ t, p, z: 0 }));
+
+  it('一幅 = 窗口宽度的 60%（不小于平时的 29u）', () => {
+    expect(magDragSpan(U, 1440)).toBeCloseTo(1440 * MAG_DRAG_SPAN);
+    expect(magDragSpan(10, 200)).toBe(290);
+    // 1440 宽的窗口：同样划 250px，平时差不多过一幅，放大时只走 0.29 幅
+    expect(dragPosition(3, -250, U, 0, 12)).toBeCloseTo(3 + 250 / (29 * U));
+    expect(dragPosition(3, -250, U, 0, 12, magDragSpan(U, 1440))).toBeCloseTo(3 + 250 / 864);
+  });
+
+  it('松手时一次最多只切到相邻的一幅，甩得再快也不会过头', () => {
+    // 100ms 内划过 2 幅：平时投射到 +3，放大时只到下一幅
+    const fast = pairs([[0, 3], [100, 5]]);
+    expect(releasePosition(fast, 5, 12)).toBe(8);
+    expect(releasePosition(fast, 5, 12, 3)).toBe(4);
+    expect(releasePosition(pairs([[0, 3], [100, 1]]), 1, 12, 3)).toBe(2);
+    // 首尾照样夹住
+    expect(releasePosition(pairs([[0, 11], [100, 12]]), 11.4, 12, 11)).toBe(11);
+    // 划得不够一半、速度也慢：留在原地
+    expect(releasePosition(pairs([[0, 3.15], [100, 3.2]]), 3.2, 12, 3)).toBe(3);
   });
 });

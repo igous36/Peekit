@@ -20,6 +20,20 @@ export interface Motion {
   hp: number;
   /** 玻璃运动系数 0–1 */
   mot: number;
+  /** 放大查看 0–1（2026-11-17 新增）：1 = 当前作品放大到几乎占满窗口 */
+  mag: number;
+  magT: number;
+  magV: number;
+  /** 全屏程度 0–1：1 = 放大框改为铺满整个屏幕 */
+  fs: number;
+  fsT: number;
+  fsV: number;
+  /**
+   * 系列缩略图换页后的入场 0–1（2026-11-17 新增）：换页时归零，再弹回 1（目标固定为 1）。
+   * 缩略图按 min(镜头, pg) 走原型的入场动画，所以换页时新一页会像拉远镜头时那样依次浮现。
+   */
+  pg: number;
+  pgV: number;
 }
 
 export function createMotion(pos0: number, zoom0 = 0): Motion {
@@ -29,5 +43,8 @@ export function createMotion(pos0: number, zoom0 = 0): Motion {
     press: 0, pressV: 0,
     ox: 0, oy: 0, oxT: 0, oyT: 0, hp: 0,
     mot: 0,
+    mag: 0, magT: 0, magV: 0,
+    fs: 0, fsT: 0, fsV: 0,
+    pg: 1, pgV: 0,
   };
 }

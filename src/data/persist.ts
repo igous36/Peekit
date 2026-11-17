@@ -1,15 +1,25 @@
 // 本地保存：Tauri 里用 tauri-plugin-store 写到应用数据目录的 library.json
 // （改动后 100ms 自动保存，退出时再落盘）；浏览器里调试时退回 localStorage。
+//
+// 2026-11-17 起保存的是多个预览集（key "sets"，version 3）。
+// 旧版的单个作品库（key "library"，version 2）只读不写：启动时用来迁移，原样留着方便回退。
 import { isTauri } from '@tauri-apps/api/core';
-import type { SavedLibrary } from './library';
+import type { SavedSets } from './sets';
 
 export const STORE_FILE = 'library.json';
-const STORE_KEY = 'library';
-const LOCAL_KEY = 'peekit:library';
+const SETS_KEY = 'sets';
+const LEGACY_KEY = 'library';
+const LOCAL_SETS = 'peekit:sets';
+const LOCAL_LEGACY = 'peekit:library';
+
+export interface StoredData {
+  sets: unknown;
+  legacy: unknown;
+}
 
 export interface LibraryStore {
-  load(): Promise<unknown>;
-  save(data: SavedLibrary): void;
+  load(): Promise<StoredData>;
+  save(data: SavedSets): void;
 }
 
 class TauriLibraryStore implements LibraryStore {
@@ -22,31 +32,34 @@ class TauriLibraryStore implements LibraryStore {
     return this.store;
   }
 
-  async load(): Promise<unknown> {
+  async load(): Promise<StoredData> {
     const st = await this.open();
-    return st.get(STORE_KEY);
+    return { sets: await st.get(SETS_KEY), legacy: await st.get(LEGACY_KEY) };
   }
 
-  save(data: SavedLibrary): void {
+  save(data: SavedSets): void {
     void this.open()
-      .then((st) => st.set(STORE_KEY, data))
-      .catch((err) => console.error('保存作品库失败', err));
+      .then((st) => st.set(SETS_KEY, data))
+      .catch((err) => console.error('保存预览集失败', err));
   }
 }
 
 class LocalLibraryStore implements LibraryStore {
-  async load(): Promise<unknown> {
-    try {
-      const raw = localStorage.getItem(LOCAL_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
+  async load(): Promise<StoredData> {
+    const read = (k: string) => {
+      try {
+        const raw = localStorage.getItem(k);
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    };
+    return { sets: read(LOCAL_SETS), legacy: read(LOCAL_LEGACY) };
   }
 
-  save(data: SavedLibrary): void {
+  save(data: SavedSets): void {
     try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify(data));
+      localStorage.setItem(LOCAL_SETS, JSON.stringify(data));
     } catch {
       /* 隐私模式等情况下存不了，忽略 */
     }

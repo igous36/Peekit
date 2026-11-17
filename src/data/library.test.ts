@@ -54,10 +54,10 @@ describe('合并扫描结果', () => {
     expect(lib.series[1].color).toBe('#5FA3C9');
   });
 
-  it('文件夹名超过 16 个字截断', () => {
+  it('文件夹系列名超过上限（40 字，2026-11-17 从 16 放宽，见 series-ops）截断', () => {
     const saved = emptySaved();
-    const { lib } = mergeScan(saved, [item('x\\a.png', { folder: 'x', folderName: '一二三四五六七八九十一二三四五六七八' })], ids);
-    expect(lib.series[0].name.length).toBe(16);
+    const { lib } = mergeScan(saved, [item('x\\a.png', { folder: 'x', folderName: '一二三四五六七八九十'.repeat(5) })], ids);
+    expect(lib.series[0].name.length).toBe(40);
   });
 
   it('按日期从早到晚排序，日期相同按文件名', () => {

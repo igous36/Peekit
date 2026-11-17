@@ -10,12 +10,13 @@ import {
   tileOpacity, tileRadius, cameraScale, cameraTilt, thumbAt, artSize, thumbSize, shadowWeights, tileNeedsBackdrop,
   DEFAULT_ART, type Sinker, type PaintingInput, type ArtSize, type BackdropRect,
 } from '../engine/mapping';
-import { stage as S, shadow, GLASS_STRENGTH } from '../tokens';
+import { stage as S, GLASS_STRENGTH } from '../tokens';
 
 /** 玻璃模糊半径（px），和 tokens 里 glass-blur 的算法一致 */
 const GLASS_BLUR_PX = Math.round(12 + GLASS_STRENGTH * 20);
 import { el, Styled } from './dom';
 import { artKey, fillArt } from './art';
+import { menuPoint } from './context-menu';
 
 /** 同时在范围内的画作最多 6 幅（|d| ≤ 2.65），其中可见的最多 5 幅 */
 const CARD_POOL = 6;
@@ -55,8 +56,12 @@ export interface StageFrame {
   oy: number;
   mot: number;
   cur: number;
-  /** 当前作品的同系列成员（不含当前），按时间顺序 */
+  /** 这一页要显示的同系列缩略图（不含当前），按时间顺序；系列太长时分页，见 mapping.thumbPage */
   members: readonly number[];
+  /** 上排张数（默认一半） */
+  thumbTop?: number;
+  /** 换页入场 0–1（Motion.pg），缩略图按 min(镜头, 它) 入场 */
+  thumbIn?: number;
   /** 缩略图整排淡出系数 */
   fade: number;
   hoverThumb: string | null;
@@ -66,6 +71,10 @@ export interface StageFrame {
   reduced: boolean;
   /** 已经解码好的原图（只给停留超过 300ms 的那一幅） */
   hiRes: { id: string; url: string } | null;
+  /** 放大查看程度 0–1：中间那张由放大层接替，其他画作淡出 */
+  mag: number;
+  /** 全屏程度 0–1：到 1 时深色底已经盖满窗口，玻璃网格整个隐藏（省掉所有背景模糊） */
+  fs: number;
 }
 
 export interface StageHandlers {
@@ -74,6 +83,8 @@ export interface StageHandlers {
   thumbHover?: (workId: string | null) => void;
   /** 图片读取失败（original = 原图失败，可以退回缩略图） */
   artError?: (workId: string, original: boolean, src: string) => void;
+  /** 右键（或菜单键）：index = 画作 / 缩略图对应的作品，舞台空白处为 −1；x / y 是菜单位置 */
+  menu?: (index: number, x: number, y: number) => void;
 }
 
 const aspectOf = (w: Work): number => (w.width && w.height ? w.width / w.height : NaN);
@@ -95,6 +106,14 @@ export class StageView {
     const camera = el('div', { class: 'camera' });
     this.camera = new Styled(camera);
     this.section.append(camera);
+    // 右键：找到点中的画作 / 缩略图（池子节点上记着作品下标）
+    this.section.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const hit = (e.target as Element).closest?.('.art, .thumb');
+      const slot = hit ? [...this.cards, ...this.thumbs].find((s) => s.node.el === hit) : undefined;
+      const p = menuPoint(e, hit ?? this.section);
+      this.handlers.menu?.(slot ? slot.index : -1, p.x, p.y);
+    });
 
     // 玻璃网格：祖先链上只有 transform，不能加 opacity / filter / mask（HANDOFF §2）
     const grid = el('div', { class: 'glass-grid', 'aria-hidden': 'true' });
@@ -211,8 +230,9 @@ export class StageView {
     // 画作：先给已经在池子里的作品保留原节点，再把空节点分给新进入范围的作品
     const inp: PaintingInput = {
       press: clamp(f.press, -0.2, 1.2),
-      pxN: clamp(f.ox / 80, -1, 1),
-      pyN: clamp(f.oy / 50, -1, 1),
+      // 放大时不跟指针倾斜
+      pxN: clamp(f.ox / 80, -1, 1) * (1 - clamp(f.mag, 0, 1)),
+      pyN: clamp(f.oy / 50, -1, 1) * (1 - clamp(f.mag, 0, 1)),
       vel: f.reduced ? 0 : clamp(f.posV, -12, 12),
     };
     const lo = Math.max(0, Math.ceil(pos - RENDER_RANGE));
@@ -255,7 +275,10 @@ export class StageView {
         continue;
       }
       collectSinker(p, sinkers);
-      if (p.opacity <= 0.001) {
+      // 放大查看：中间那张交给放大层（这里隐藏），其他画作跟着淡出
+      const mag = clamp(f.mag, 0, 1);
+      const opacity = mag > 0.001 ? (i === f.cur ? 0 : p.opacity * (1 - mag)) : p.opacity;
+      if (opacity <= 0.001) {
         this.hide(slot);
         continue;
       }
@@ -270,7 +293,7 @@ export class StageView {
         'transform',
         `perspective(1400px) translate3d(${U(p.x)}, ${U(p.y)}, 0) rotateY(${r3(p.ry)}deg) rotateX(${r3(p.rx)}deg) scale(${r3(p.s)})`,
       );
-      node.set('opacity', String(r3(p.opacity)));
+      node.set('opacity', String(r3(opacity)));
       node.set(
         'filter',
         p.blur < 0.05 && p.brightness > 0.999 ? 'none' : `brightness(${r3(p.brightness)}) blur(${r3(p.blur)}px)`,
@@ -281,7 +304,7 @@ export class StageView {
       slot.shadowCenter!.set('opacity', String(r3(sw.center)));
       slot.shadowSide!.set('opacity', String(r3(sw.side)));
       node.set('z-index', String(p.z));
-      node.set('pointer-events', p.opacity > 0.3 ? 'auto' : 'none');
+      node.set('pointer-events', opacity > 0.3 && mag < 0.5 ? 'auto' : 'none');
       const title = displayTitle(w);
       node.attr('aria-label', i === f.cur ? t('card.current', { title }) : t('card.view', { title }));
     }
@@ -291,9 +314,15 @@ export class StageView {
     // 背景模糊的影响范围（u）：玻璃模糊半径 + 画作自身最多 6px 模糊，再留 1u 余量
     const uPx = Math.min(window.innerHeight / 100, window.innerWidth * 0.006) || 1;
     const margin = (GLASS_BLUR_PX + 6) / uPx + 1;
+    // 全屏：深色底已经盖满窗口，玻璃格全部隐藏（子元素单独写了 visibility，只能逐格设置）
+    const gridOff = f.fs > 0.999;
     for (const tile of this.tiles) {
-      const a = tileAvoid(tile.tx, tile.ty, sinkers, mot);
       const node = tile.node;
+      if (gridOff) {
+        node.set('visibility', 'hidden');
+        continue;
+      }
+      const a = tileAvoid(tile.tx, tile.ty, sinkers, mot);
       // 完全让开的格子直接隐藏，省掉它的背景模糊（backdrop-filter）
       node.set('visibility', a.f > 0.98 ? 'hidden' : 'visible');
       // 背后只有纯色背景的格子关掉模糊：结果一样，省下一次模糊计算
@@ -325,7 +354,7 @@ export class StageView {
       const w = works[wi];
       slot.index = wi;
       const hov = f.hoverThumb === w.id;
-      const tf = thumbAt(k, count, zc, f.fade, hov);
+      const tf = thumbAt(k, count, Math.min(zc, f.thumbIn ?? 1), f.fade, hov, f.thumbTop);
       if (tf.opacity <= 0.001) {
         this.hide(slot);
         slot.node.attr('tabindex', '-1');
@@ -341,7 +370,7 @@ export class StageView {
       node.set('transform', `translate3d(${U(tf.x)}, ${U(tf.y)}, 0) scale(${r3(tf.s)})`);
       node.set('opacity', String(r3(tf.opacity)));
       node.set('filter', 1 - tf.e < 0.01 ? 'none' : `blur(${r3(tf.blur)}px)`);
-      node.set('box-shadow', hov ? shadow['shadow-thumb-hover'] : shadow['shadow-thumb']);
+      node.set('box-shadow', hov ? 'var(--shadow-thumb-hover)' : 'var(--shadow-thumb)');
       const live = tf.opacity > 0.5;
       node.set('pointer-events', live ? 'auto' : 'none');
       node.attr('tabindex', live ? '0' : '-1');

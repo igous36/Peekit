@@ -113,6 +113,33 @@ describe('§6 弹簧', () => {
   });
 });
 
+describe('放大查看 / 全屏的弹簧（2026-11-17 新增）', () => {
+  it('临界阻尼：放大到 1 不过冲（图片不会冲出窗口再弹回），约 0.4s 基本到位，最后精确停住', () => {
+    const m = createMotion(0);
+    m.magT = 1;
+    m.fsT = 1;
+    let peak = 0;
+    let at = -1;
+    for (let i = 1; i <= 300; i++) {
+      const r = stepMotion(m, FRAME, rest());
+      peak = Math.max(peak, m.mag, m.fs);
+      if (at < 0 && m.mag > 0.98) at = i;
+      if (r.settled) break;
+    }
+    expect(peak).toBeLessThanOrEqual(1);
+    expect(at).toBeGreaterThan(0);
+    expect(at / 60).toBeLessThan(0.45);
+    expect(m.mag).toBe(1);
+    expect(m.fs).toBe(1);
+  });
+
+  it('放大没停稳时循环不停', () => {
+    const m = createMotion(0);
+    m.magT = 1;
+    expect(stepMotion(m, FRAME, rest()).settled).toBe(false);
+  });
+});
+
 describe('§7.2 玻璃运动系数 mot', () => {
   it('横向拖动时升到接近 1', () => {
     const m = createMotion(0);
@@ -149,5 +176,17 @@ describe('§7.2 玻璃运动系数 mot', () => {
     const o: StepOptions = { ...rest(), axis: 'x', dragging: true, avoidGlass: false };
     for (let i = 0; i < 30; i++) stepMotion(m, FRAME, o);
     expect(m.mot).toBe(0);
+  });
+});
+
+describe('缩略图换页入场（2026-11-17 新增）', () => {
+  it('换页时归零，弹回 1 后精确停住；没回到 1 时循环不停', () => {
+    const m = createMotion(0, 1);
+    m.pg = 0;
+    expect(stepMotion(m, FRAME, rest()).settled).toBe(false);
+    const r = run(m, rest());
+    expect(r.settled).toBe(true);
+    expect(m.pg).toBe(1);
+    expect(m.pgV).toBe(0);
   });
 });

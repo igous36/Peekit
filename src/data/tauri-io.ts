@@ -1,5 +1,5 @@
 // 和 Rust 端打交道：扫描、缩略图、选择文件 / 文件夹、拖放。只在 Tauri 里用。
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc, isTauri } from '@tauri-apps/api/core';
 import type { ScanItem, Source } from './library';
 import { t } from '../i18n';
 
@@ -21,6 +21,18 @@ export function makeThumbnail(path: string, mtime: number, size: number): Promis
 /** 本地文件 → asset 协议 URL */
 export const assetUrl = (path: string): string => convertFileSrc(path);
 
+/** 系统全屏：不管窗口是否最大化，都统一进入全屏；退出后恢复原来的窗口状态 */
+export async function setWindowFullscreen(on: boolean): Promise<void> {
+  if (isTauri()) {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().setFullscreen(on);
+    return;
+  }
+  // 浏览器调试：用 Fullscreen API
+  if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+  if (!on && document.fullscreenElement) await document.exitFullscreen();
+}
+
 /** 把前端错误打到运行 tauri dev 的终端里 */
 export function logError(msg: string): void {
   void invoke('log_error', { msg }).catch(() => {});
@@ -31,7 +43,14 @@ export async function diagnoseImage(url: string): Promise<void> {
   try {
     const r = await fetch(url);
     const body = r.ok ? `${(await r.blob()).size} bytes` : (await r.text()).slice(0, 200);
-    logError(`图片加载失败 ${url} → HTTP ${r.status} ${r.headers.get('content-type') ?? ''} ${body}`);
+    let extra = '';
+    if (r.status === 403) {
+      // asset 协议的 403 有两种来源：不在访问范围里 / 系统不让打开。Rust 端各查一遍
+      const path = decodeURIComponent(new URL(url).pathname.slice(1));
+      const { invoke } = await import('@tauri-apps/api/core');
+      extra = ` · ${await invoke<string>('asset_check', { path }).catch((e) => `asset_check 出错 ${String(e)}`)}`;
+    }
+    logError(`图片加载失败 ${url} → HTTP ${r.status} ${r.headers.get('content-type') ?? ''} ${body}${extra}`);
   } catch (err) {
     logError(`图片加载失败 ${url} → fetch 出错 ${String(err)}`);
   }
@@ -69,4 +88,64 @@ export async function onFileDrop(cb: (phase: DropPhase, paths: string[]) => void
     else if (p.type === 'drop') cb('drop', p.paths);
     else cb('leave', []);
   });
+}
+
+// ───────────── 2026-11-17 新增：深色模式窗口底色、右键菜单、关于 ─────────────
+
+/** 桌面版：窗口底色跟着深浅换，并记下来给下次启动用（避免启动时先闪一下另一种底色） */
+export function setThemeBackground(dark: boolean): void {
+  if (!isTauri()) return;
+  void invoke('set_theme_background', { dark }).catch((err) => logError(`设置窗口底色失败: ${String(err)}`));
+}
+
+/** 原图另存为：Rust 端弹系统的保存对话框再复制文件。返回保存到的路径，取消时为 null */
+export function saveImageAs(path: string): Promise<string | null> {
+  return invoke<string | null>('save_image_as', { path });
+}
+
+/** 在资源管理器里显示并选中这个文件 */
+export async function revealInFolder(path: string): Promise<void> {
+  const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+  await revealItemInDir(path);
+}
+
+/** 用系统默认浏览器打开链接（关于对话框里的 GitHub 仓库） */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri()) {
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url);
+  } else {
+    window.open(url, '_blank', 'noopener');
+  }
+}
+
+/** 应用版本号（桌面版读 Tauri 配置；浏览器调试读 package.json） */
+export async function appVersion(): Promise<string> {
+  if (isTauri()) {
+    const { getVersion } = await import('@tauri-apps/api/app');
+    return getVersion();
+  }
+  return __APP_VERSION__;
+}
+
+/**
+ * 复制图像到剪贴板：读原图，转成 PNG（剪贴板只认 PNG）再写入。
+ * PNG 原图直接写，不重新编码。
+ */
+export async function copyImage(url: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  let blob = await res.blob();
+  if (blob.type !== 'image/png') {
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0);
+    bmp.close();
+    blob = await new Promise<Blob>((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG 编码失败'))), 'image/png'),
+    );
+  }
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
 }

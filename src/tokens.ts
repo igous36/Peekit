@@ -22,10 +22,77 @@ export const color = {
   'color-meter-track': 'rgba(22,22,22,0.12)',
   // 窗口按钮悬停时的白色圆底（2026-11-17 新增，§2 窗口按钮）
   'color-window-btn-hover': 'rgba(255,255,255,0.7)',
+  // 全屏的深色底，以及浮在它上面的顶栏图标 / 文字和悬停圆底（2026-11-17 新增）
+  'color-fullscreen-bg': '#0F0F0F',
+  'color-text-on-dark': 'rgba(255,255,255,0.72)',
+  'color-window-btn-hover-dark': 'rgba(255,255,255,0.14)',
+  // 全屏深色底上的“纯白”和“墨黑”（悬停、关闭按钮）：浅色、深色模式一样
+  'color-on-dark-strong': '#FFFFFF',
+  'color-on-dark-ink': '#161616',
+  // 以下原来直接写在 CSS 里，深色模式要换值，所以提成变量（2026-11-17）
+  'color-drop-scrim': 'rgba(213,213,211,0.6)',
+  'color-art-edge': 'rgba(255,255,255,0.35)',
+  'color-thumb-edge': 'rgba(255,255,255,0.4)',
+  'color-scrim': 'rgba(22,22,22,0.28)',
 } as const;
+
+export type ColorToken = keyof typeof color;
+
+/**
+ * 深色模式（2026-11-17 新增，左上角菜单里切换：浅色 / 深色 / 跟随系统）。
+ * 思路和浅色一致：灰底 + 卡片（浅色是灰底白卡，深色是近黑底深灰卡），黄色强调色不变；
+ * 文字、刻度、分隔线按同样的层级反过来。全屏时弹出的菜单也用这一套（全屏背景是深色）。
+ */
+export const colorDark: Record<ColorToken, string> = {
+  'color-bg': '#1C1C1D',
+  'color-surface': '#2B2B2D',
+  'color-text': '#F2F2F0',
+  'color-text-secondary': '#A6A6A3',
+  'color-text-on-bg': '#C8C8C5',
+  'color-divider': '#3A3A3C',
+  'color-chip': '#38383A',
+  'color-input-bg': '#242426',
+  'color-input-border': '#4A4A4D',
+  'color-dashed': '#6E6E6B',
+  'color-accent': '#F2D000',
+  'color-tick-current': '#F2F2F0',
+  'color-tick-series': '#9E9E9B',
+  'color-tick-other': '#5C5C5A',
+  'color-timeline-line': '#3A3A3C',
+  'color-meter-track': 'rgba(255,255,255,0.16)',
+  'color-window-btn-hover': 'rgba(255,255,255,0.10)',
+  'color-fullscreen-bg': '#0F0F0F',
+  'color-text-on-dark': 'rgba(255,255,255,0.72)',
+  'color-window-btn-hover-dark': 'rgba(255,255,255,0.14)',
+  'color-on-dark-strong': '#FFFFFF',
+  'color-on-dark-ink': '#161616',
+  'color-drop-scrim': 'rgba(28,28,29,0.6)',
+  'color-art-edge': 'rgba(255,255,255,0.08)',
+  'color-thumb-edge': 'rgba(255,255,255,0.10)',
+  'color-scrim': 'rgba(0,0,0,0.5)',
+};
 
 /** 新建系列时依次取用的系列色（只用于 8px 圆点） */
 export const seriesPalette = ['#C27F4B', '#5FA3C9', '#8E6FB0', '#C2577A'] as const;
+
+/**
+ * “修改颜色”调色器里的常用色（2026-11-17 新增）：前 4 个就是上面的系列色，
+ * 其余是同一个调子的低饱和色（浓淡 ≤ 50%）。名字在 i18n 的 color.<key>。
+ */
+export const seriesPresets = [
+  { key: 'clay', hex: '#C27F4B' },
+  { key: 'mist', hex: '#5FA3C9' },
+  { key: 'wisteria', hex: '#8E6FB0' },
+  { key: 'rose', hex: '#C2577A' },
+  { key: 'mustard', hex: '#C4A24F' },
+  { key: 'moss', hex: '#7F9A62' },
+  { key: 'sage', hex: '#8AA597' },
+  { key: 'teal', hex: '#4F8080' },
+  { key: 'slate', hex: '#6E8299' },
+  { key: 'brick', hex: '#B0614B' },
+  { key: 'blush', hex: '#C49A9A' },
+  { key: 'stone', hex: '#A0958A' },
+] as const;
 /** “未归类”系列的颜色（名字随界面语言，见 i18n 的 series.unassigned） */
 export const UNASSIGNED_COLOR = '#A3A3A3';
 
@@ -38,6 +105,13 @@ export const glass = {
   'glass-blur': (strength = GLASS_STRENGTH) => `blur(${Math.round(12 + strength * 20)}px) saturate(140%)`,
   'glass-border': '1px solid rgba(255,255,255,0.5)',
   'glass-highlight': 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.03)',
+} as const;
+
+/** 深色模式的玻璃：白色底要淡得多，否则在深色底上是一块块灰板 */
+export const glassDark = {
+  'glass-fill': (strength = GLASS_STRENGTH) => `rgba(255,255,255,${round3(0.02 + strength * 0.06)})`,
+  'glass-border': '1px solid rgba(255,255,255,0.10)',
+  'glass-highlight': 'inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(0,0,0,0.25)',
 } as const;
 
 export const radius = {
@@ -62,6 +136,18 @@ export const shadow = {
   'shadow-pill': '0 18px 36px -16px rgba(38,30,12,0.3), 0 2px 6px rgba(0,0,0,0.06)',
   'shadow-indicator': '0 0 0 3px #FFFFFF, 0 2px 8px rgba(120,90,0,0.35)',
 } as const;
+
+/** 深色模式的阴影：黑色、更浓；卡片类再加一圈很淡的亮边，深色底上才分得出层次 */
+export const shadowDark: Record<keyof typeof shadow, string> = {
+  'shadow-art-center': '0 36px 70px -12px rgba(0,0,0,0.6), 0 8px 18px rgba(0,0,0,0.4)',
+  'shadow-art-side': '0 22px 46px -12px rgba(0,0,0,0.45), 0 8px 18px rgba(0,0,0,0.3)',
+  'shadow-thumb': '0 18px 32px -14px rgba(0,0,0,0.6), 0 4px 10px rgba(0,0,0,0.35)',
+  'shadow-thumb-hover': '0 26px 40px -14px rgba(0,0,0,0.7), 0 6px 14px rgba(0,0,0,0.4)',
+  'shadow-panel': '0 24px 48px -18px rgba(0,0,0,0.65), 0 2px 6px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06)',
+  'shadow-timeline': '0 20px 40px -18px rgba(0,0,0,0.65), 0 2px 6px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06)',
+  'shadow-pill': '0 18px 36px -16px rgba(0,0,0,0.65), 0 2px 6px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.06)',
+  'shadow-indicator': '0 0 0 3px #2B2B2D, 0 2px 8px rgba(0,0,0,0.5)',
+};
 
 const SANS = "Inter, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, Consolas, Menlo, monospace";
@@ -90,6 +176,8 @@ export const spring = {
   press: [320, 32],
   /** 系统开启“减少动态效果”时 */
   reducedMotion: [300, 35],
+  /** 放大查看 / 全屏（2026-11-17 新增）：临界阻尼，放大时不过冲出窗口 */
+  magnify: [260, 32],
 } as const;
 
 /** 舞台尺寸，单位 u = min(1vh, 0.6vw)，HANDOFF §2 */
@@ -113,15 +201,50 @@ function round3(v: number): number {
   return Math.round(v * 1000) / 1000;
 }
 
-/** 把颜色、玻璃、圆角、阴影、字体写成 :root 上的 CSS 变量 */
-export function applyTokens(root: HTMLElement = document.documentElement): void {
-  const set = (k: string, v: string) => root.style.setProperty(`--${k}`, v);
-  for (const [k, v] of Object.entries(color)) set(k, v);
-  set('glass-fill', glass['glass-fill']());
-  set('glass-blur', glass['glass-blur']());
-  set('glass-border', glass['glass-border']);
-  set('glass-highlight', glass['glass-highlight']);
-  for (const [k, v] of Object.entries(radius)) if (typeof v === 'string') set(k, v);
-  for (const [k, v] of Object.entries(shadow)) set(k, v);
-  for (const [k, v] of Object.entries(font)) set(k, v);
+/**
+ * 用深色变量的地方：深色模式下的整个页面；全屏时（背景是深色）弹出的菜单、右键菜单、关于对话框。
+ * 变量写在这些元素上，子元素自然继承。
+ */
+export const DARK_SCOPES = [
+  ':root[data-theme="dark"]',
+  '.app.is-fullscreen .menu-panel',
+  '.app.is-fullscreen .ctx-menu',
+  '.app.is-fullscreen .about-dialog',
+  '.app.is-fullscreen .popover',
+] as const;
+
+/** 一组 CSS 变量声明 */
+function declarations(vars: Record<string, string>): string {
+  return Object.entries(vars)
+    .map(([k, v]) => `--${k}:${v};`)
+    .join('');
+}
+
+/** 浅色 / 深色两套变量（浅色带上圆角、字体这些和主题无关的） */
+export function tokenCss(): string {
+  const light: Record<string, string> = { ...color, ...shadow, ...font };
+  light['glass-fill'] = glass['glass-fill']();
+  light['glass-blur'] = glass['glass-blur']();
+  light['glass-border'] = glass['glass-border'];
+  light['glass-highlight'] = glass['glass-highlight'];
+  for (const [k, v] of Object.entries(radius)) if (typeof v === 'string') light[k] = v;
+  const dark: Record<string, string> = { ...colorDark, ...shadowDark };
+  dark['glass-fill'] = glassDark['glass-fill']();
+  dark['glass-border'] = glassDark['glass-border'];
+  dark['glass-highlight'] = glassDark['glass-highlight'];
+  return `:root{${declarations(light)}}\n${DARK_SCOPES.join(',')}{${declarations(dark)}}`;
+}
+
+/**
+ * 把颜色、玻璃、圆角、阴影、字体写成 CSS 变量。
+ * 写成一张样式表而不是 :root 的行内样式：行内样式优先级最高，深色模式的规则会盖不过它。
+ */
+export function applyTokens(doc: Document = document): void {
+  let style = doc.getElementById('peekit-tokens');
+  if (!style) {
+    style = doc.createElement('style');
+    style.id = 'peekit-tokens';
+    doc.head.prepend(style);
+  }
+  style.textContent = tokenCss();
 }

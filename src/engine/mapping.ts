@@ -2,6 +2,7 @@
 // 这里只算数，不碰 DOM；拼样式字符串和写 DOM 在 view/ 里。
 import { clamp, clamp01, smoothstep } from './math';
 import { stage } from '../tokens';
+import { magnifyTargets } from './magnify';
 
 /** 超过这个距离的画作不渲染 */
 export const RENDER_RANGE = 2.65;
@@ -55,9 +56,15 @@ export function needsOriginalFor(
   viewW: number,
   viewH: number,
   dpr: number,
+  magnified = false,
 ): boolean {
   if (!width || !height) return true;
   if (Math.max(width, height) <= THUMB_EDGE) return true;
+  // 放大查看 / 全屏时按全屏框算（放大框比它小，够用）
+  if (magnified) {
+    const full = magnifyTargets(width / height, viewW, viewH).full;
+    return Math.max(full.w, full.h) * dpr > THUMB_EDGE;
+  }
   const art = artSize(width / height);
   const u = Math.min(viewH / 100, viewW * 0.006);
   return Math.max(art.w, art.h) * u * dpr > THUMB_EDGE;
@@ -271,18 +278,89 @@ export interface ThumbFrame {
 }
 
 /** 第 k 个同系列缩略图（共 count 个）；zc = clamp(zoom, 0, 1) */
-export function thumbAt(k: number, count: number, zc: number, fade: number, hovered: boolean): ThumbFrame {
-  const topN = Math.ceil(count / 2);
+/**
+ * 第 k 张缩略图（共 count 张，上排 topN 张）。
+ * 2026-11-17：上排张数改成参数（分页后由 thumbPage 决定，默认仍是一半）；
+ * 依次出现的间隔原型是每张 0.08，一排多于 5 张时压缩到整排共 0.32，保证镜头拉到底时每张都完全出现。
+ */
+export function thumbAt(
+  k: number, count: number, zc: number, fade: number, hovered: boolean, topN = Math.ceil(count / 2),
+): ThumbFrame {
   const top = k < topN;
   const row = top ? -1 : 1;
   const idx = top ? k : k - topN;
   const cnt = top ? topN : count - topN;
-  const x = (idx - (cnt - 1) / 2) * 25;
-  const t = clamp01((zc - 0.12 - idx * 0.08 - (row > 0 ? 0.04 : 0)) / 0.55);
+  const x = (idx - (cnt - 1) / 2) * THUMB_SPACING;
+  const stagger = Math.min(0.08, 0.32 / Math.max(1, cnt - 1));
+  const t = clamp01((zc - 0.12 - idx * stagger - (row > 0 ? 0.04 : 0)) / 0.55);
   const e = 1 - Math.pow(1 - t, 3);
   const y = row * (30 + 17 * e) + (hovered ? -1.2 : 0);
   const s = (0.82 + 0.18 * e) * (hovered ? 1.05 : 1);
   return { x, y, s, e, opacity: e * fade, blur: (1 - e) * 8 };
+}
+
+/** 缩略图横向间距（u，镜头缩放前），原型值 */
+export const THUMB_SPACING = 25;
+/** 缩略图排离窗口左右边、离信息卡左边至少留这么多（px） */
+export const THUMB_EDGE_PX = 24;
+export const THUMB_INFO_GAP_PX = 16;
+
+export interface ThumbCaps {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * 系列视图每排最多放几张缩略图（2026-11-17 新增）。按居中排开、镜头拉到底（cameraScale(1)）后的屏幕尺寸算：
+ * 下排左右各留 24px；上排的右边还要躲开右上角的信息卡（infoLeft = 信息卡左边的 x，px）。
+ * 原型的作品少，没考虑一排放不下的情况：系列一多，超出的缩略图会跑出窗口或压在信息卡下面。
+ */
+export function thumbCaps(vw: number, vh: number, infoLeft: number): ThumbCaps {
+  const u = Math.min(vh / 100, vw * 0.006) || 1;
+  const cs = cameraScale(1);
+  const spacing = THUMB_SPACING * u * cs;
+  // 缩略图半宽（悬停时放大 1.05）
+  const half = (stage.thumbW / 2) * 1.05 * u * cs;
+  const fit = (halfPx: number) => Math.max(1, Math.floor((2 * (halfPx - half)) / spacing) + 1);
+  const cx = vw / 2;
+  const top = fit(Math.min(cx - THUMB_EDGE_PX, infoLeft - THUMB_INFO_GAP_PX - cx));
+  // 下排虽然放得更多，但最多只比上排多 2 张：两排宽度接近，看起来是一组，而不是一长条
+  return { top, bottom: Math.min(fit(cx - THUMB_EDGE_PX), top + THUMB_ROW_EXTRA) };
+}
+
+/** 下排最多比上排多几张 */
+export const THUMB_ROW_EXTRA = 2;
+
+export interface ThumbPage {
+  /** 这一页的缩略图（作品下标，不含当前那幅），按时间顺序 */
+  items: number[];
+  /** 上排张数 */
+  top: number;
+  page: number;
+  pages: number;
+}
+
+/**
+ * 系列视图的缩略图分页（2026-11-17 新增）。
+ * series：同系列所有作品的下标（含当前 cur），按时间顺序。
+ * - 其余作品两排放得下：一页全显示，上排放一半（和原型一致）
+ * - 放不下：按每页 per = 上排 + 下排 个位置把整个系列切开；默认显示当前那幅所在的页
+ *   （当前那幅在舞台中间，不占缩略图位置），page 不为 null 时显示指定的页
+ */
+export function thumbPage(series: readonly number[], cur: number, caps: ThumbCaps, page: number | null = null): ThumbPage {
+  const per = Math.max(2, caps.top + caps.bottom);
+  const others = series.filter((i) => i !== cur);
+  let items = others;
+  let p = 0;
+  let pages = 1;
+  if (others.length > per) {
+    pages = Math.ceil(series.length / per);
+    const auto = Math.floor(Math.max(0, series.indexOf(cur)) / per);
+    p = page === null ? auto : clamp(page, 0, pages - 1);
+    items = series.slice(p * per, p * per + per).filter((i) => i !== cur);
+  }
+  const top = clamp(Math.ceil(items.length / 2), items.length - caps.bottom, caps.top);
+  return { items, top: clamp(top, 0, items.length), page: p, pages };
 }
 
 /** 系列标题胶囊的显示程度 */

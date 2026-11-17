@@ -57,27 +57,70 @@ export class DropOverlay {
   }
 }
 
-/** 底部轻提示：导入结果等，几秒后自动消失；sticky 的要手动 hide */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
+/** 有操作按钮（撤销）时多留一会儿 */
+const TOAST_MS = 2600;
+const TOAST_ACTION_MS = 6000;
+
+/**
+ * 底部轻提示：导入结果等，几秒后自动消失；sticky 的要手动 hide。
+ * 2026-11-17：可以带一个操作按钮（右键删除后的“撤销”），指针停在上面时不消失。
+ */
 export class Toast {
   readonly root: HTMLElement;
   private text: Styled;
+  private actionBtn: HTMLButtonElement;
+  private action: ToastAction | null = null;
   private timer = 0;
+  private hovering = false;
+  private sticky = false;
 
   constructor() {
     const span = el('span');
     this.text = new Styled(span);
-    this.root = el('div', { class: 'toast', role: 'status', 'aria-live': 'polite' }, [span]);
+    this.actionBtn = el('button', { type: 'button', class: 'toast-action', hidden: true });
+    this.actionBtn.addEventListener('click', () => {
+      const a = this.action;
+      this.hide();
+      a?.run();
+    });
+    this.root = el('div', { class: 'toast', role: 'status', 'aria-live': 'polite' }, [span, this.actionBtn]);
+    this.root.addEventListener('pointerenter', () => {
+      this.hovering = true;
+      window.clearTimeout(this.timer);
+    });
+    this.root.addEventListener('pointerleave', () => {
+      this.hovering = false;
+      this.arm();
+    });
   }
 
-  show(message: string, sticky = false): void {
+  show(message: string, opts: boolean | { sticky?: boolean; action?: ToastAction } = false): void {
+    const o = typeof opts === 'boolean' ? { sticky: opts } : opts;
     window.clearTimeout(this.timer);
     this.text.text(message);
+    this.action = o.action ?? null;
+    this.actionBtn.hidden = !this.action;
+    this.actionBtn.textContent = this.action?.label ?? '';
+    this.root.classList.toggle('has-action', !!this.action);
     this.root.classList.add('is-visible');
-    if (!sticky) this.timer = window.setTimeout(() => this.hide(), 2600);
+    this.sticky = !!o.sticky;
+    this.arm();
+  }
+
+  private arm(): void {
+    window.clearTimeout(this.timer);
+    if (this.sticky || this.hovering) return;
+    this.timer = window.setTimeout(() => this.hide(), this.action ? TOAST_ACTION_MS : TOAST_MS);
   }
 
   hide(): void {
     window.clearTimeout(this.timer);
-    this.root.classList.remove('is-visible');
+    this.action = null;
+    this.root.classList.remove('is-visible', 'has-action');
   }
 }

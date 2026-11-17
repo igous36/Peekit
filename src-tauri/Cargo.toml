@@ -1,6 +1,6 @@
 [package]
 name = "peekit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Peekit：磨砂玻璃时间轴插画浏览器"
 edition = "2021"
 
@@ -27,6 +27,7 @@ kamadak-exif = "0.6"
 webp = "0.3"
 walkdir = "2"
 rayon = "1"
+tauri-plugin-opener = "2"
 
 # 安装包要小：发布版按体积优化
 [profile.release]

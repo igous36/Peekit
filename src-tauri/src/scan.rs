@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::dates;
 
@@ -40,6 +40,7 @@ pub struct ScanItem {
     pub title: String,
     /// 从文件夹导入时，图片所在的文件夹（按它自动建系列）；单独选的文件为空
     pub folder: Option<String>,
+    /// 自动建系列用的名字：导入的文件夹名 + 往下各级子文件夹名，用“-”连接（见 folder_series_name）
     pub folder_name: Option<String>,
     /// 元数据里的日期（YYYY.MM.DD）；没有时为空，前端用 mtime 显示
     pub date: Option<String>,
@@ -71,8 +72,36 @@ fn is_hidden(name: &str) -> bool {
     name.starts_with('.') || name.eq_ignore_ascii_case("thumbs.db")
 }
 
-/// 一个来源里的所有图片：(图片路径, 所在文件夹)。按路径的实际类型判断文件 / 文件夹（拖进来的路径不一定标对）
-fn collect(source: &Source) -> Vec<(PathBuf, Option<PathBuf>)> {
+/// 扫描找到的一张图
+struct Found {
+    path: PathBuf,
+    /// 所在文件夹（从文件夹导入时才有）
+    folder: Option<PathBuf>,
+    /// 自动建系列用的名字
+    series: Option<String>,
+}
+
+/// 文件夹导入时自动建系列的名字（2026-11-17 用户定的规则）：
+/// 直接放在导入文件夹里的图归入「文件夹名」，子文件夹里的归入「文件夹名-子文件夹名」，再往下依此类推。
+/// 例：导入 D:\画\插画 → 插画\a.png 归「插画」，插画\2024\b.png 归「插画-2024」，插画\2024\夏\c.png 归「插画-2024-夏」。
+pub fn folder_series_name(root: &Path, folder: &Path) -> String {
+    // 导入的是盘符根目录（D:\）时没有文件夹名，用“D:”
+    let root_name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.to_string_lossy().trim_end_matches(['\\', '/']).to_string());
+    let mut parts = vec![root_name];
+    if let Ok(rel) = folder.strip_prefix(root) {
+        parts.extend(rel.components().filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        }));
+    }
+    parts.join("-")
+}
+
+/// 一个来源里的所有图片。按路径的实际类型判断文件 / 文件夹（拖进来的路径不一定标对）
+fn collect(source: &Source) -> Vec<Found> {
     let root = PathBuf::from(&source.path);
     if root.is_dir() {
         walkdir::WalkDir::new(&root)
@@ -82,18 +111,21 @@ fn collect(source: &Source) -> Vec<(PathBuf, Option<PathBuf>)> {
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file() && is_image(e.path()))
             .map(|e| {
-                let parent = e.path().parent().map(Path::to_path_buf);
-                (e.into_path(), parent)
+                let folder = e.path().parent().map(Path::to_path_buf);
+                let series = folder.as_deref().map(|f| folder_series_name(&root, f));
+                Found { path: e.into_path(), folder, series }
             })
             .collect()
     } else if root.is_file() && is_image(&root) {
-        vec![(root, None)]
+        vec![Found { path: root, folder: None, series: None }]
     } else {
         vec![]
     }
 }
 
-fn read_item(path: &Path, folder: Option<&Path>, known: Option<&Known>) -> Option<ScanItem> {
+fn read_item(found: &Found, known: Option<&Known>) -> Option<ScanItem> {
+    let path = found.path.as_path();
+    let folder = found.folder.as_deref();
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta
         .modified()
@@ -104,7 +136,7 @@ fn read_item(path: &Path, folder: Option<&Path>, known: Option<&Known>) -> Optio
     let size = meta.len();
     let file_name = path.file_name()?.to_string_lossy().into_owned();
     let title = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| file_name.clone());
-    let folder_name = folder.and_then(|f| f.file_name()).map(|n| n.to_string_lossy().into_owned());
+    let folder_name = found.series.clone();
     let base = |date: Option<String>, ts: f64, width: u32, height: u32| ScanItem {
         path: path.to_string_lossy().into_owned(),
         file_name: file_name.clone(),
@@ -146,33 +178,29 @@ pub async fn scan_sources(
     known: HashMap<String, Known>,
 ) -> Result<ScanResult, String> {
     // 让前端能用 asset 协议读这些位置的原图
-    let scope = app.asset_protocol_scope();
     for s in &sources {
         let p = Path::new(&s.path);
-        let r = if p.is_dir() || s.kind == "folder" { scope.allow_directory(p, true) } else { scope.allow_file(p) };
-        if let Err(e) = r {
-            eprintln!("asset scope: {e}");
-        }
+        crate::asset_scope::allow(&app, p, p.is_dir() || s.kind == "folder");
     }
 
     tauri::async_runtime::spawn_blocking(move || {
         let missing: Vec<String> =
             sources.iter().filter(|s| !Path::new(&s.path).exists()).map(|s| s.path.clone()).collect();
         let mut seen = std::collections::HashSet::new();
-        let mut files: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+        let mut files: Vec<Found> = Vec::new();
         for s in &sources {
-            for (p, folder) in collect(s) {
+            for f in collect(s) {
                 // 同一张图既在文件夹里又被单独选过：以先出现的为准
-                if seen.insert(p.clone()) {
-                    files.push((p, folder));
+                if seen.insert(f.path.clone()) {
+                    files.push(f);
                 }
             }
         }
         let items: Vec<ScanItem> = files
             .par_iter()
-            .filter_map(|(p, folder)| {
-                let key = p.to_string_lossy();
-                read_item(p, folder.as_deref(), known.get(key.as_ref()))
+            .filter_map(|f| {
+                let key = f.path.to_string_lossy();
+                read_item(f, known.get(key.as_ref()))
             })
             .collect();
         ScanResult { items, missing }
@@ -207,13 +235,28 @@ mod tests {
 
         let files = collect(&Source { path: dir.to_string_lossy().into(), kind: "folder".into() });
         assert_eq!(files.len(), 2);
-        let a = files.iter().find(|(p, _)| p.ends_with("a.png")).unwrap();
-        let item = read_item(&a.0, a.1.as_deref(), None).unwrap();
+        let root_name = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let a = files.iter().find(|f| f.path.ends_with("a.png")).unwrap();
+        let item = read_item(a, None).unwrap();
         assert_eq!((item.width, item.height), (40, 50));
         assert_eq!(item.title, "a");
-        assert_eq!(item.folder_name.as_deref(), Some("夏日"));
+        // 子文件夹里的图：「导入的文件夹名-子文件夹名」
+        assert_eq!(item.folder_name, Some(format!("{root_name}-夏日")));
         assert!(item.date.is_none());
         assert_eq!(item.ts, item.mtime);
+        // 直接放在导入文件夹里的图：「导入的文件夹名」
+        let b = files.iter().find(|f| f.path.ends_with("b.jpg")).unwrap();
+        assert_eq!(read_item(b, None).unwrap().folder_name, Some(root_name));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn folder_series_names_follow_the_tree() {
+        let root = Path::new(r"D:\画\插画");
+        assert_eq!(folder_series_name(root, root), "插画");
+        assert_eq!(folder_series_name(root, &root.join("2024")), "插画-2024");
+        assert_eq!(folder_series_name(root, &root.join("2024").join("夏")), "插画-2024-夏");
+        // 盘符根目录没有文件夹名
+        assert_eq!(folder_series_name(Path::new(r"D:\"), Path::new(r"D:\草稿")), "D:-草稿");
     }
 }

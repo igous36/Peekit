@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口权限：基础能力 + 无边框窗口的拖动、双击最大化、右上角窗口按钮 + 本地保存 + 选择文件 / 文件夹",
+  "description": "主窗口权限：基础能力 + 无边框窗口的拖动、双击最大化、右上角窗口按钮 + 本地保存 + 选择文件 / 文件夹 + 在资源管理器中显示 + 只能打开本项目的 GitHub 仓库链接",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -10,7 +10,13 @@
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
+    "core:window:allow-set-fullscreen",
     "store:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://github.com/igous36/Peekit*" }]
+    }
   ]
 }

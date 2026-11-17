@@ -83,14 +83,11 @@ pub fn dominant_color(img: &DynamicImage) -> String {
 }
 
 /// 启动时调用：先建好缩略图目录，再把它加进 asset 协议的允许范围。
-/// 配置里的 `$APPCACHE/thumbs/**` 是启动那一刻解析的，这里再按真实存在的目录补一条，更稳。
+/// 配置里的 `$APPCACHE/thumbs/**` 只认“看上去的路径”；目录被系统重定向时（见 asset_scope.rs）
+/// 规范路径对不上，所以这里按真实存在的目录再补两条。
 pub fn prepare(app: &AppHandle) {
     match thumbs_dir(app) {
-        Ok(dir) => {
-            if let Err(e) = app.asset_protocol_scope().allow_directory(&dir, true) {
-                eprintln!("缩略图目录加入 asset 范围失败: {e}");
-            }
-        }
+        Ok(dir) => crate::asset_scope::allow(app, &dir, true),
         Err(e) => eprintln!("建缩略图目录失败: {e}"),
     }
 }
@@ -105,14 +102,19 @@ fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
 pub async fn make_thumbnail(app: AppHandle, path: String, mtime: f64, size: u64) -> Result<Thumb, String> {
     let out = thumbs_dir(&app)?.join(cache_name(&path, mtime, size));
     if out.exists() {
+        // 文件可能被系统重定向到别处（见 asset_scope.rs），按它的真实位置再放行一次
+        crate::asset_scope::allow_real_file(&app, &out);
         return Ok(Thumb { path: out.to_string_lossy().into_owned(), color: None });
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let color = generate(Path::new(&path), &out)?;
-        Ok(Thumb { path: out.to_string_lossy().into_owned(), color: Some(color) })
+    let target = out.clone();
+    let thumb = tauri::async_runtime::spawn_blocking(move || {
+        let color = generate(Path::new(&path), &target)?;
+        Ok::<_, String>(Thumb { path: target.to_string_lossy().into_owned(), color: Some(color) })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    crate::asset_scope::allow_real_file(&app, &out);
+    Ok(thumb)
 }
 
 #[cfg(test)]

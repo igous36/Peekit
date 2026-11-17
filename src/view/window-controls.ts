@@ -18,8 +18,10 @@ export class WindowControls {
   readonly root: HTMLElement;
   private maxBtn: HTMLButtonElement;
   private maximized = false;
+  private fullscreen = false;
 
-  constructor() {
+  /** exitFullscreen：全屏时中间那个按钮变成“退出全屏” */
+  constructor(private exitFullscreen: () => void = () => {}) {
     const min = this.button('window.minimize', ICON_MINIMIZE);
     this.maxBtn = this.button('window.maximize', ICON_MAXIMIZE);
     const close = this.button('window.close', ICON_CLOSE, 'win-btn--close');
@@ -37,7 +39,10 @@ export class WindowControls {
 
     const win = getCurrentWindow();
     min.addEventListener('click', () => void win.minimize());
-    this.maxBtn.addEventListener('click', () => void win.toggleMaximize());
+    this.maxBtn.addEventListener('click', () => {
+      if (this.fullscreen) this.exitFullscreen();
+      else void win.toggleMaximize();
+    });
     close.addEventListener('click', () => void win.close());
 
     // 双击拖动区、系统快捷键（Win+↑）等也会改变最大化状态，所以跟着 resize 事件同步图标
@@ -57,10 +62,21 @@ export class WindowControls {
   private setMaximized(on: boolean): void {
     if (on === this.maximized) return;
     this.maximized = on;
-    const key: MessageKey = on ? 'window.restore' : 'window.maximize';
+    this.syncMaxButton();
+  }
+
+  /** 进入 / 退出全屏时调用 */
+  setFullscreen(on: boolean): void {
+    if (on === this.fullscreen) return;
+    this.fullscreen = on;
+    this.syncMaxButton();
+  }
+
+  private syncMaxButton(): void {
+    const key: MessageKey = this.fullscreen ? 'window.exitFullscreen' : this.maximized ? 'window.restore' : 'window.maximize';
     this.maxBtn.dataset.i18nAria = key;
     this.maxBtn.dataset.i18nTitle = key;
     applyI18n(this.root);
-    this.maxBtn.replaceChildren(svgIcon(on ? ICON_RESTORE : ICON_MAXIMIZE, 16));
+    this.maxBtn.replaceChildren(svgIcon(this.fullscreen || this.maximized ? ICON_RESTORE : ICON_MAXIMIZE, 16));
   }
 }

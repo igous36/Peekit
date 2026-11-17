@@ -3,6 +3,7 @@
 import type { Work } from '../data/types';
 import { t } from '../i18n';
 import { el } from './dom';
+import { color } from '../tokens';
 
 /** 内容的身份：变了才需要重新填充 */
 export function artKey(work: Work, src: string | undefined): string {
@@ -16,8 +17,8 @@ export function fillArt(canvas: HTMLElement, work: Work, src: string | undefined
     canvas.append(el('span', { class: 'art-broken', 'data-i18n': 'card.broken' }, [t('card.broken')]));
     return;
   }
-  // 加载中只显示纯色底：该画作的主色
-  canvas.style.background = work.bg;
+  // 加载中只显示纯色底：该画作的主色；还不知道主色时用芯片灰（跟着深浅色走）
+  canvas.style.background = work.bg === color['color-chip'] ? 'var(--color-chip)' : work.bg;
   if (src) {
     const img = el('img', { src, alt: '', draggable: 'false', decoding: 'async' });
     if (onError) img.addEventListener('error', onError, { once: true });
