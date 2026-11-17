@@ -4,7 +4,7 @@ A modern image & illustration viewer.
 
 Peekit is a desktop viewer for artists to browse their own work. You push the paintings along a timeline by hand: drag sideways and the artworks slide past, the ones you drag away sink behind a pane of frosted glass. Drag down and the camera pulls back to reveal the rest of the series.
 
-> 中文简介：Peekit 是给画师自己看作品用的桌面插画浏览器。左右拖动沿时间轴浏览，被拖走的画作沉到磨砂玻璃后面；向下拖动拉远镜头，同系列的作品从上下浮现。界面支持中文 / English。
+> Peekit 是给画师自己看作品用的桌面插画浏览器。左右拖动沿时间轴浏览，被拖走的画作沉到磨砂玻璃后面；向下拖动拉远镜头，同系列的作品从上下浮现。界面支持中文 / English。
 
 ## Features
 
