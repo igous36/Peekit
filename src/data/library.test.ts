@@ -168,3 +168,18 @@ describe('保存格式', () => {
     expect(formatLocalDate(0)).toBe('');
   });
 });
+
+describe('RAW + JPG 合并成一幅（2026-11-18）', () => {
+  it('扫描结果里 JPG 带着同名 RAW 的路径：作品上也带着（右键可以把 RAW 另存为）；没配对的作品没有', () => {
+    const saved = emptySaved();
+    const { lib } = mergeScan(
+      saved,
+      [item('D:/p/IMG_1.JPG', { raw: 'D:/p/IMG_1.CR3' }), item('D:/p/IMG_2.CR3'), item('D:/p/IMG_3.jpg')],
+      ids,
+    );
+    const byName = Object.fromEntries(lib.works.map((w) => [w.fileName, w]));
+    expect(byName['IMG_1.JPG'].raw).toBe('D:/p/IMG_1.CR3');
+    expect(byName['IMG_2.CR3'].raw).toBeUndefined();
+    expect(byName['IMG_3.jpg'].raw).toBeUndefined();
+  });
+});

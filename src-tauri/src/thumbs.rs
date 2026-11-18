@@ -35,8 +35,13 @@ pub fn cache_name(path: &str, mtime: f64, size: u64) -> String {
     format!("{:016x}.webp", fnv1a(key.as_bytes()))
 }
 
-/// 解码并按 EXIF 方向转正（PNG / JPEG / WebP / GIF / BMP / TIFF；动图取第一帧，多页 TIFF 取第一页）
-pub fn decode_oriented(src: &Path) -> Result<DynamicImage, String> {
+/// 解码并按 EXIF 方向转正（PNG / JPEG / WebP / GIF / BMP / TIFF；动图取第一帧，多页 TIFF 取第一页；
+/// 相机 RAW 取内嵌的 JPEG 预览，见 raw.rs）。
+/// min_edge 只对 RAW 有用：给了就挑“长边不小于它的最小那张”预览（缩略图用，解码快），否则挑最大的
+pub fn decode_for(src: &Path, min_edge: Option<u32>) -> Result<DynamicImage, String> {
+    if crate::raw::is_raw(src) {
+        return crate::raw::decode(src, min_edge);
+    }
     let reader = image::ImageReader::open(src).map_err(|e| e.to_string())?;
     let reader = reader.with_guessed_format().map_err(|e| e.to_string())?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
@@ -63,7 +68,7 @@ fn write_webp(img: &DynamicImage, out: &Path, quality: f32) -> Result<(), String
 
 /// 解码（按 EXIF 方向转正）→ 缩到长边 1600 → 有损 WebP；返回主色
 pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
-    let mut img = decode_oriented(src)?;
+    let mut img = decode_for(src, Some(THUMB_EDGE))?;
     let (w, h) = img.dimensions();
     if w.max(h) > THUMB_EDGE {
         img = img.thumbnail(THUMB_EDGE, THUMB_EDGE);
@@ -75,7 +80,7 @@ pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
 
 // ───────────── 显示用大图（2026-11-17 新增） ─────────────
 //
-// 界面（WebView2）不能直接显示 TIFF。放大查看 / 全屏时要比 1600px 缩略图更清楚的图，
+// 界面（WebView2）不能直接显示 TIFF 和相机 RAW。放大查看 / 全屏时要比 1600px 缩略图更清楚的图，
 // 复制图像时要完整的原图像素，这两种都由这里从原图生成并缓存在缩略图目录里：
 // - 看（full = false）：长边不超过 4096 的高质量 WebP（够 4K 屏全屏）
 // - 复制（full = true）：原尺寸 PNG（剪贴板只认 PNG）
@@ -90,7 +95,8 @@ pub fn display_cache_name(path: &str, mtime: f64, size: u64, full: bool) -> Stri
 }
 
 pub fn generate_display(src: &Path, out: &Path, full: bool) -> Result<(), String> {
-    let img = decode_oriented(src)?;
+    // RAW：看大图挑够 4096 的最小预览（没有就最大的）；复制挑最大的
+    let img = decode_for(src, if full { None } else { Some(DISPLAY_EDGE) })?;
     if full {
         let tmp = out.with_extension("tmp");
         img.save_with_format(&tmp, image::ImageFormat::Png).map_err(|e| e.to_string())?;

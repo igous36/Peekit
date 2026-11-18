@@ -3,7 +3,7 @@ import { LANGS, LANG_NATIVE, MESSAGES, langFromLocale, langTag, t } from './i18n
 import { monthLabel } from './engine/months';
 import { stopAt, STOP_PX } from './view/theme-switch';
 
-describe('界面文案（2026-11-18 起 10 种语言）', () => {
+describe('界面文案（2026-11-18 起 12 种语言）', () => {
   it('每种语言的键和中文完全一致，没有空文案', () => {
     const zh = Object.keys(MESSAGES.zh).sort();
     for (const l of LANGS) {
@@ -21,11 +21,12 @@ describe('界面文案（2026-11-18 起 10 种语言）', () => {
     }
   });
 
-  it('联合国工作语言 + 德意韩葡，每种都有本族语名字', () => {
-    expect([...LANGS].sort()).toEqual(['ar', 'de', 'en', 'es', 'fr', 'it', 'ko', 'pt', 'ru', 'zh']);
+  it('联合国工作语言 + 德意韩葡 + 日语、繁体中文，每种都有本族语名字', () => {
+    expect([...LANGS].sort()).toEqual(['ar', 'de', 'en', 'es', 'fr', 'it', 'ja', 'ko', 'pt', 'ru', 'zh', 'zh-TW']);
     for (const l of LANGS) expect(LANG_NATIVE[l]).toBeTruthy();
     expect(langTag('zh')).toBe('zh-CN');
     expect(langTag('pt')).toBe('pt');
+    expect(langTag('zh-TW')).toBe('zh-TW');
   });
 
   it('跟随系统语言：按前缀匹配，不支持的用英文', () => {
@@ -33,13 +34,22 @@ describe('界面文案（2026-11-18 起 10 种语言）', () => {
     expect(langFromLocale('pt-BR')).toBe('pt');
     expect(langFromLocale('de_DE')).toBe('de');
     expect(langFromLocale('ar-EG')).toBe('ar');
-    expect(langFromLocale('ja-JP')).toBe('en');
+    expect(langFromLocale('ja-JP')).toBe('ja');
+    expect(langFromLocale('xx-YY')).toBe('en');
+    // 中文分简繁
+    expect(langFromLocale('zh')).toBe('zh');
+    expect(langFromLocale('zh-SG')).toBe('zh');
+    expect(langFromLocale('zh-TW')).toBe('zh-TW');
+    expect(langFromLocale('zh-HK')).toBe('zh-TW');
+    expect(langFromLocale('zh_MO')).toBe('zh-TW');
+    expect(langFromLocale('zh-Hant-TW')).toBe('zh-TW');
+    expect(langFromLocale('zh-Hans-HK')).toBe('zh');
     expect(langFromLocale('')).toBe('en');
   });
 
   it('替换占位符', () => {
-    expect(t('info.sameSeries', { n: 5 }, 'zh')).toBe('同系列 5 幅');
-    expect(t('info.sameSeries', { n: 5 }, 'en')).toBe('5 in this series');
+    expect(t('info.seriesPos', { i: 3, n: 14 }, 'zh')).toBe('系列中第 3 幅，共 14 幅');
+    expect(t('info.seriesPos', { i: 3, n: 14 }, 'en')).toBe('3 of 14 in this series');
     expect(t('refresh.done', { added: 3, removed: 1 }, 'de')).toBe('Aktualisiert: 3 hinzugefügt, 1 entfernt');
     expect(t('app.name', undefined, 'ko')).toBe('Peekit');
   });

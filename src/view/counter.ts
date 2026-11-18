@@ -36,9 +36,13 @@ export function orbitStep(last: number, now: number): number {
   return Math.max(-ORBIT_MAX_STEP, Math.min(ORBIT_MAX_STEP, (now - last) * ORBIT_DEG));
 }
 
-/** 进度：第 1 幅 0，最后一幅 1；拖过头不超出 [0, 1]；只有一幅（或没有）时 0 */
+/**
+ * 进度：第 1 幅 0，最后一幅 1；拖过头不超出 [0, 1]。
+ * 只有一幅时它既是第一幅也是最后一幅：满圈（全蓝，2026-11-18 用户要求）；没有作品时 0
+ */
 export function counterProgress(pos: number, n: number): number {
-  if (n <= 1) return 0;
+  if (n <= 0) return 0;
+  if (n === 1) return 1;
   return Math.min(1, Math.max(0, pos / (n - 1)));
 }
 

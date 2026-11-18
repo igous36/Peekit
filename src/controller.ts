@@ -17,11 +17,12 @@ import {
 } from './engine/fszoom';
 import {
   cameraStep, DETENT_NUDGE, DETENT_RELEASE_MS, feedDetent, isWheelNotch, keyAction, landDetent, newDetent, WheelAccumulator,
-  wheelLanding,
+  wheelLanding, flipAction,
   type CameraDetent, type CameraTargets, type NavAction,
 } from './engine/discrete';
 import { clamp } from './engine/math';
 import { spring } from './tokens';
+import { prefs, wheelCanToggleFullscreen } from './prefs';
 
 /** 按住不动这么久就放大 */
 export const LONG_PRESS_MS = 350;
@@ -244,7 +245,9 @@ export class Controller {
     const view: FsView = { z: m.fzT, px: m.fpxT, py: m.fpyT };
     window.clearTimeout(this.fsUnderTimer);
     this.touch();
-    const act = feedWheelGate(this.gate, dy, now, view.z);
+    let act = feedWheelGate(this.gate, dy, now, view.z);
+    // 偏好设置关掉了“滚轮进入 / 退出全屏”（或滚轮在切换照片）：到底了只有橡皮筋，不退出
+    if (act === 'exit' && !wheelCanToggleFullscreen(prefs())) act = 'rubber';
     if (act === 'exit') {
       // 继续往下：退出全屏（回到单幅）；这次滚动剩下的事件吞掉，不会接着拉到系列视图
       this.wheelSwallowAt = now;
@@ -493,16 +496,22 @@ export class Controller {
     }
     // 鼠标滚轮的一格立刻推拉一级；触控板照旧累计 + 冷却
     const notch = isWheelNotch(e.deltaMode, (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY);
+    const p = prefs();
     // 单幅卡位：刚滚回单幅，这次滚动里同方向再滚只顶一下，不冲到另一头（规则见 engine/discrete.ts）
     const vertical = e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-    if (vertical && feedDetent(this.detent, e.deltaY, now, notch)) {
+    if (!p.wheelFlip && vertical && feedDetent(this.detent, e.deltaY, now, notch)) {
       this.wheel.reset();
       this.nudgeDetent(Math.sign(e.deltaY));
       this.kick();
       return;
     }
     const a = this.wheel.feed(e.deltaX, e.deltaY, now, notch);
-    if (a) {
+    // 偏好设置“滚轮切换照片”（2026-11-18）：纵向滚轮翻上一幅 / 下一幅，不推拉镜头
+    if (a && p.wheelFlip) {
+      this.apply(flipAction(a));
+    } else if (a && a.kind === 'in' && this.magnified && !wheelCanToggleFullscreen(p)) {
+      // 关掉了“滚轮进入 / 退出全屏”：放大时再往上滚不进全屏
+    } else if (a) {
       const from = this.targets();
       this.apply(a);
       // 防冲过头（2026-11-18 起放大再往上是全屏）：落到单幅、往上落到放大是卡位；进了全屏吞掉这次滚动剩下的

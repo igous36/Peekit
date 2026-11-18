@@ -1,12 +1,14 @@
 // 当前作品的主题色（2026-11-18 新增，左上角计数圆环的外圈用）：
 // 抓缩略图 → 缩到 24×24 → pickPalette（engine/palette.ts）挑 3 个；按作品缓存。
 // 翻动中不抓图，每换一幅立刻用它的主色派生（或缓存），外圈颜色跟着快速流动；停下停留 140ms 再抓完整的。
-// 没有缩略图（示例数据、SVG、读不了）时用色块 / 主色派生。
+// SVG（2026-11-18 起）：没有生成缩略图（矢量原图就是缩略图），把它画到 32×32 的小画布上再取色（线稿细，稍大一点）。
+// 没有缩略图（示例数据、读不了）时用色块 / 主色派生。
 import type { Work } from './types';
 import { derivePalette, pickPalette } from '../engine/palette';
 import { imageKind } from './formats';
 
 const SIZE = 24;
+const SVG_SIZE = 32;
 const DWELL_MS = 140;
 const CACHE_MAX = 400;
 
@@ -15,6 +17,29 @@ export function fallbackPalette(w: Work): string[] {
   const shapeColors = [...new Set((w.shapes ?? []).map((s) => s.c).filter((c) => /^#[0-9a-f]{6}$/i.test(c)))];
   if (shapeColors.length >= 3) return shapeColors.slice(0, 3);
   return derivePalette(shapeColors[0] ?? w.bg, 3);
+}
+
+/**
+ * SVG 取色用的像素：读出 SVG 内容 → 同源的 blob 地址 → 当图片解码（脚本不会运行）→ 画到小画布上。
+ * 浏览器的 createImageBitmap 不认 SVG，所以走 <img>；blob 地址是同源的，画布不会被“污染”，能读像素
+ */
+export async function sampleSvg(url: string, size = SVG_SIZE): Promise<Uint8ClampedArray> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blobUrl = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = blobUrl;
+    await img.decode();
+    const canvas = new OffscreenCanvas(size, size);
+    const g = canvas.getContext('2d');
+    if (!g) throw new Error('no 2d context');
+    g.drawImage(img, 0, 0, size, size);
+    return g.getImageData(0, 0, size, size).data;
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 async function sample(url: string): Promise<Uint8ClampedArray> {
@@ -65,15 +90,17 @@ export class PaletteLoader {
     if (moving) return;
     // 停在这一幅了：抓完整的主题色
     this.settled = true;
-    const url = w.thumb && w.path && imageKind(w.path) !== 'svg' && !w.broken ? w.thumb : null;
+    const url = w.thumb && w.path && !w.broken ? w.thumb : null;
     if (!url) {
       const colors = fallbackPalette(w);
       this.store(w.id, colors);
       if (same) this.onPalette(colors, false);
       return;
     }
+    // SVG 的“缩略图”就是矢量原图：画到小画布上取色
+    const svg = imageKind(w.path!) === 'svg';
     this.timer = setTimeout(() => {
-      void sample(url)
+      void (svg ? sampleSvg(url) : sample(url))
         .then((px) => pickPalette(px, 3))
         .catch(() => fallbackPalette(w))
         .then((colors) => {

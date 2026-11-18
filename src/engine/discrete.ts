@@ -196,3 +196,13 @@ export function cameraStep(t: CameraTargets, kind: 'in' | 'out' | 'escape'): Cam
   // Esc：全屏 → 退出全屏回到单幅；放大 → 单幅；系列视图 → 单幅
   return { zoomT: 0, magT: 0, fsT: 0 };
 }
+
+/**
+ * 偏好设置“滚轮切换照片”（2026-11-18）：纵向滚轮的推拉换成翻一幅——往下滚（原来是拉远）= 下一幅，
+ * 往上滚（原来是拉近）= 上一幅。横向、其它动作不变
+ */
+export function flipAction(a: NavAction): NavAction {
+  if (a.kind === 'out') return { kind: 'step', delta: 1 };
+  if (a.kind === 'in') return { kind: 'step', delta: -1 };
+  return a;
+}

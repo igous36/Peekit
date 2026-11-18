@@ -4,7 +4,7 @@ A modern image & illustration viewer.
 
 Peekit is a desktop viewer for artists to browse their own work. You push the paintings along a timeline by hand: drag sideways and the artworks slide past, the ones you drag away sink behind a pane of frosted glass. Drag down and the camera pulls back to reveal the rest of the series.
 
-> Peekit 是给画师自己看作品用的桌面插画浏览器。左右拖动沿时间轴浏览，被拖走的画作沉到磨砂玻璃后面；向下拖动拉远镜头，同系列的作品从上下浮现。界面支持中文、英语、阿拉伯语、法语、俄语、西班牙语、德语、意大利语、韩语、葡萄牙语 10 种语言。
+> Peekit 是给画师自己看作品用的桌面插画浏览器。左右拖动沿时间轴浏览，被拖走的画作沉到磨砂玻璃后面；向下拖动拉远镜头，同系列的作品从上下浮现。界面支持简体中文、繁体中文、英语、日语、阿拉伯语、法语、俄语、西班牙语、德语、意大利语、韩语、葡萄牙语 12 种语言。
 
 ## Features
 
@@ -18,7 +18,7 @@ Peekit is a desktop viewer for artists to browse their own work. You push the pa
 - **Cards follow the artwork's aspect ratio**, with the same visual weight for portrait, square and landscape pieces.
 - **Fast**: native TypeScript and plain DOM + CSS transforms, one `requestAnimationFrame` loop that stops when everything is at rest. 1600 px WebP thumbnails are generated and cached by the Rust side.
 - **Keyboard, mouse and trackpad**: ← → to switch; ↑ ↓ to move between series, single, enlarged and fullscreen views; Esc to go back; F11 for fullscreen; F5 to refresh. Each mouse-wheel notch moves one level; two-finger swipes work on a trackpad.
-- **10 interface languages**: Chinese, English, Arabic, French, Russian, Spanish, German, Italian, Korean and Portuguese, following the system language by default.
+- **12 interface languages**: Simplified Chinese, Traditional Chinese, English, Japanese, Arabic, French, Russian, Spanish, German, Italian, Korean and Portuguese, following the system language by default.
 - **Light, dark or system** appearance.
 - Respects the system's *reduce motion* setting.
 

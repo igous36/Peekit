@@ -11,8 +11,11 @@ use tauri::AppHandle;
 
 use crate::dates;
 
-/// 和前端 data/formats.ts 的 IMAGE_EXTS 一致
+/// 和前端 data/formats.ts 的 IMAGE_EXTS 一致（2026-11-18 起另外支持相机 RAW，见 raw.rs 的 RAW_EXTS）
 pub const IMAGE_EXTS: [&str; 9] = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg"];
+
+/// RAW + JPG 同时拍时，和 RAW 配对的那张（同一文件夹、同名）可以是这些格式
+const PAIR_EXTS: [&str; 2] = ["jpg", "jpeg"];
 
 #[derive(Deserialize)]
 pub struct Source {
@@ -52,6 +55,9 @@ pub struct ScanItem {
     /// 已按 EXIF 方向换算过的宽高
     pub width: u32,
     pub height: u32,
+    /// RAW + JPG 同时拍、合并成一幅时（2026-11-18）：这幅显示的是 JPG，这里是同名 RAW 原片的路径（另存为时可以选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,7 +73,7 @@ fn ext_of(p: &Path) -> Option<String> {
 }
 
 pub fn is_image(p: &Path) -> bool {
-    ext_of(p).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str()))
+    ext_of(p).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str())) || crate::raw::is_raw(p)
 }
 
 /// SVG：不经过 image 解码，界面直接显示矢量原图
@@ -86,6 +92,51 @@ struct Found {
     folder: Option<PathBuf>,
     /// 自动建系列用的名字
     series: Option<String>,
+    /// 和它同名的 RAW 原片（RAW + JPG 合并成一幅时，挂在 JPG 上）
+    raw: Option<PathBuf>,
+}
+
+/// RAW + JPG 同时拍（2026-11-18 用户选的合并）：同一文件夹里同名（不分大小写）的 RAW 和 JPG 合并成一幅，
+/// 显示 JPG（相机直出、不用再解码 RAW），RAW 原片的路径挂在 JPG 上，另存为时可以选。
+/// 返回合并后的列表：被合并的 RAW 去掉；没有配对的 RAW 照常保留
+fn pair_raw_with_jpeg(files: Vec<Found>) -> Vec<Found> {
+    let key = |p: &Path| {
+        let dir = p.parent().map(|d| d.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+        (dir, stem)
+    };
+    let mut jpegs: HashMap<(String, String), usize> = HashMap::new();
+    for (i, f) in files.iter().enumerate() {
+        if ext_of(&f.path).is_some_and(|e| PAIR_EXTS.contains(&e.as_str())) {
+            jpegs.entry(key(&f.path)).or_insert(i);
+        }
+    }
+    if jpegs.is_empty() {
+        return files;
+    }
+    let mut raw_of: HashMap<usize, PathBuf> = HashMap::new();
+    let mut paired = vec![false; files.len()];
+    for (i, f) in files.iter().enumerate() {
+        if crate::raw::is_raw(&f.path) {
+            if let Some(&j) = jpegs.get(&key(&f.path)) {
+                if !raw_of.contains_key(&j) {
+                    raw_of.insert(j, f.path.clone());
+                    paired[i] = true;
+                }
+            }
+        }
+    }
+    files
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !paired[*i])
+        .map(|(i, mut f)| {
+            if let Some(r) = raw_of.remove(&i) {
+                f.raw = Some(r);
+            }
+            f
+        })
+        .collect()
 }
 
 /// 文件夹导入时自动建系列的名字（2026-11-17 用户定的规则）：
@@ -120,11 +171,11 @@ fn collect(source: &Source) -> Vec<Found> {
             .map(|e| {
                 let folder = e.path().parent().map(Path::to_path_buf);
                 let series = folder.as_deref().map(|f| folder_series_name(&root, f));
-                Found { path: e.into_path(), folder, series }
+                Found { path: e.into_path(), folder, series, raw: None }
             })
             .collect()
     } else if root.is_file() && is_image(&root) {
-        vec![Found { path: root, folder: None, series: None }]
+        vec![Found { path: root, folder: None, series: None, raw: None }]
     } else {
         vec![]
     }
@@ -156,6 +207,7 @@ fn read_item(found: &Found, known: Option<&Known>) -> Option<ScanItem> {
         size,
         width,
         height,
+        raw: found.raw.as_ref().map(|r| r.to_string_lossy().into_owned()),
     };
 
     if let Some(k) = known {
@@ -168,6 +220,18 @@ fn read_item(found: &Found, known: Option<&Known>) -> Option<ScanItem> {
     if is_svg(path) {
         let (w, h) = crate::svg::svg_size(path).unwrap_or((0, 0));
         let (date, ts) = match dates::read_xmp_date(path) {
+            Some(d) => (Some(d.display), d.ts),
+            None => (None, mtime),
+        };
+        return Some(base(date, ts, w, h));
+    }
+
+    // 相机 RAW（2026-11-18）：只读文件结构（几 KB），尺寸用内嵌预览的（已按方向换算），日期读 EXIF。
+    // 读不出结构也照样收进来（宽高 0，前端按默认比例摆；生成缩略图失败时卡片显示“无法打开这张图”）
+    if crate::raw::is_raw(path) {
+        let info = crate::raw::probe(path, false).unwrap_or_default();
+        let (w, h) = info.display_size();
+        let (date, ts) = match info.date {
             Some(d) => (Some(d.display), d.ts),
             None => (None, mtime),
         };
@@ -214,6 +278,8 @@ pub async fn scan_sources(
                 }
             }
         }
+        // RAW + JPG 同名：合并成一幅（显示 JPG，RAW 挂在上面）
+        let files = pair_raw_with_jpeg(files);
         let items: Vec<ScanItem> = files
             .par_iter()
             .filter_map(|f| {
@@ -270,6 +336,25 @@ mod tests {
         let b = files.iter().find(|f| f.path.ends_with("b.jpg")).unwrap();
         assert_eq!(read_item(b, None).unwrap().folder_name, Some(root_name));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pairs_raw_with_same_name_jpeg() {
+        // 同一文件夹、同名（不分大小写）的 RAW + JPG 合并成一幅：留 JPG、RAW 挂在上面；
+        // 没配对的 RAW 照常保留；别的文件夹里的同名 RAW 不算
+        let f = |p: &str| Found { path: PathBuf::from(p), folder: None, series: None, raw: None };
+        let out = pair_raw_with_jpeg(vec![
+            f(r"D:\a\IMG_1.CR3"),
+            f(r"D:\a\img_1.JPG"),
+            f(r"D:\a\IMG_2.CR3"),
+            f(r"D:\b\IMG_1.NEF"),
+            f(r"D:\a\IMG_3.jpg"),
+        ]);
+        let names: Vec<_> = out.iter().map(|x| x.path.to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec![r"D:\a\img_1.JPG", r"D:\a\IMG_2.CR3", r"D:\b\IMG_1.NEF", r"D:\a\IMG_3.jpg"]);
+        assert_eq!(out[0].raw.as_deref(), Some(Path::new(r"D:\a\IMG_1.CR3")));
+        assert!(out[1].raw.is_none() && out[2].raw.is_none() && out[3].raw.is_none());
+        assert!(is_image(Path::new("x.CR3")) && is_image(Path::new("x.nef")));
     }
 
     #[test]

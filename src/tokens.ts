@@ -186,20 +186,33 @@ export const shadowDark: Record<keyof typeof shadow, string> = {
 
 const SANS = "Inter, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, Consolas, Menlo, monospace";
+/** 简写里引用字体族变量（2026-11-18）：换界面语言时只改 --font-family-sans，所有字号跟着换字体 */
+const SANS_VAR = 'var(--font-family-sans)';
 
 /** 字体：值可以直接用在 CSS 的 font 简写里；字距写在 CSS 里 */
 export const font = {
   'font-family-sans': SANS,
   'font-family-mono': MONO,
-  'font-title': `600 26px/1.2 ${SANS}`,
-  'font-series': `600 14px/1.2 ${SANS}`,
-  'font-label': `500 13px/1.2 ${SANS}`,
-  'font-body': `400 14px/1.7 ${SANS}`,
-  'font-input': `400 15px/1.2 ${SANS}`,
-  'font-caption': `400 12px/1.4 ${SANS}`,
+  'font-title': `600 26px/1.2 ${SANS_VAR}`,
+  'font-series': `600 14px/1.2 ${SANS_VAR}`,
+  'font-label': `500 13px/1.2 ${SANS_VAR}`,
+  'font-body': `400 14px/1.7 ${SANS_VAR}`,
+  'font-input': `400 15px/1.2 ${SANS_VAR}`,
+  'font-caption': `400 12px/1.4 ${SANS_VAR}`,
   'font-mono': `400 13px/1.4 ${MONO}`,
   'font-mono-year': `400 10px/1 ${MONO}`,
 } as const;
+
+/**
+ * 按界面语言换中日韩字体（2026-11-18，加日语、繁体中文时）：同一个汉字简体 / 繁体 / 日文的字形不一样，
+ * 用简体中文字体（微软雅黑）显示日文会是中文字形。挂在 <html lang> 上（i18n.ts 的 langTag），只覆盖字体族变量。
+ * 都是系统自带字体（macOS / Windows），不打包字体（见 CLAUDE.md）
+ */
+export const sansByLang: Record<string, string> = {
+  ja: "Inter, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Meiryo UI', Meiryo, 'Noto Sans JP', sans-serif",
+  'zh-TW': "Inter, 'PingFang TC', 'Microsoft JhengHei UI', 'Microsoft JhengHei', 'Noto Sans TC', sans-serif",
+  ko: "Inter, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif",
+};
 
 /** 弹簧参数 [k, c]（质量 1），HANDOFF §6 */
 export const spring = {
@@ -270,7 +283,10 @@ export function tokenCss(): string {
   dark['glass-fill'] = glassDark['glass-fill']();
   dark['glass-border'] = glassDark['glass-border'];
   dark['glass-highlight'] = glassDark['glass-highlight'];
-  return `:root{${declarations(light)}}\n${DARK_SCOPES.join(',')}{${declarations(dark)}}`;
+  const langFonts = Object.entries(sansByLang)
+    .map(([l, f]) => `:root:lang(${l}){--font-family-sans:${f};}`)
+    .join('\n');
+  return `:root{${declarations(light)}}\n${DARK_SCOPES.join(',')}{${declarations(dark)}}\n${langFonts}`;
 }
 
 let tokenSheet: CSSStyleSheet | null = null;

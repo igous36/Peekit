@@ -35,6 +35,8 @@ export interface Work {
   path?: string;
   /** 文件名（含扩展名），展示态在设了自定义标题时显示 */
   fileName?: string;
+  /** RAW + JPG 同时拍、合并成一幅时（2026-11-18）：同名 RAW 原片的路径（这幅显示的是 JPG；右键可以把 RAW 另存为） */
+  raw?: string;
   /** 原图像素尺寸（已按 EXIF 方向换算），决定卡片比例 */
   width?: number;
   height?: number;

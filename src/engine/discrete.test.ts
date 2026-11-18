@@ -147,3 +147,12 @@ describe('触控板 / 滚轮', () => {
     expect(isWheelNotch(1, undefined)).toBe(true);
   });
 });
+
+describe('偏好设置：滚轮切换照片（2026-11-18）', () => {
+  it('往下滚 = 下一幅，往上滚 = 上一幅；横向翻页不变', async () => {
+    const { flipAction } = await import('./discrete');
+    expect(flipAction({ kind: 'out' })).toEqual({ kind: 'step', delta: 1 });
+    expect(flipAction({ kind: 'in' })).toEqual({ kind: 'step', delta: -1 });
+    expect(flipAction({ kind: 'step', delta: -1 })).toEqual({ kind: 'step', delta: -1 });
+  });
+});

@@ -43,9 +43,9 @@ export class Dropdown {
   }
 
   items(): HTMLElement[] {
-    // 过渡中的旧内容（.menu-ghost，inert）不算
+    // 过渡中的旧内容（.menu-ghost，inert）、禁用的项（比如变灰的偏好设置）不算
     return [...this.panel.querySelectorAll<HTMLElement>('[role^="menuitem"], .menu-input')].filter(
-      (x) => !x.closest('[hidden], [inert]'),
+      (x) => !x.closest('[hidden], [inert]') && !(x as HTMLButtonElement).disabled && x.getAttribute('aria-disabled') !== 'true',
     );
   }
 

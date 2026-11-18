@@ -1,5 +1,6 @@
 mod asset_scope;
 mod dates;
+mod raw;
 mod scan;
 mod svg;
 mod thumbs;

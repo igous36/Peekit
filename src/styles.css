@@ -2743,3 +2743,153 @@ button:focus-visible {
 .counter.is-ring:focus-visible {
   --ri-boost: 0.3;
 }
+
+/*
+ * 界面语言列表（2026-11-18 修）：每行左边是这种语言自己的名字（白字），右边是它在当前界面语言里的名字（灰字）。
+ * 原来面板固定约 220px、白字先被挤：德语 / 俄语里“中文（简体）”的说法很长，“简体中文”“繁體中文”直接被挤没了。
+ * 现在白字永远完整显示（本族语名字最长 9 个字），灰字放不下就省略号（悬停看完整的），面板按内容变宽、最宽 320px
+ */
+.app-menu .menu-flyout--lang {
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+}
+
+.menu-item--lang .menu-label {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.menu-item--lang .menu-trail {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.menu-trail-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ───────── 偏好设置（2026-11-18，≡ 菜单 → 偏好设置）：整行是按钮，左边名字 + 说明，右边开关 ───────── */
+.menu-item.menu-pref {
+  height: auto;
+  min-height: 44px;
+  padding: 10px 14px;
+  gap: 14px;
+}
+
+.menu-pref-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.menu-pref-label {
+  font: 400 14px/1.3 var(--font-family-sans);
+}
+
+/* 说明文字不常驻（2026-11-18 改）：留在行里给读屏用，看不见；悬停 / 聚焦时由 .menu-tip 浮出来 */
+.menu-pref-hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 变灰：滚轮切换照片时“滚轮进入 / 退出全屏”不可用（.menu-item:disabled 已经调低了不透明度） */
+.menu-item.menu-pref.is-disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.menu-item.menu-pref.is-disabled:hover {
+  background: transparent;
+}
+
+.menu-item.menu-pref.is-disabled .toggle {
+  background: var(--color-input-border);
+}
+
+/* 开关：关是灰轨道，开是深色轨道（深色模式下自动变成浅色），旋钮带一点回弹滑过去 */
+.toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--color-input-border);
+  transition: background-color 180ms ease;
+}
+
+.toggle.is-on {
+  background: var(--color-text);
+}
+
+.toggle-knob {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toggle.is-on .toggle-knob {
+  transform: translateX(16px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .toggle-knob {
+    transition: none;
+  }
+}
+
+/*
+ * 偏好设置的说明浮动标签（2026-11-18）：悬停在某一行 0.25 秒（或键盘聚焦）后，在菜单面板右边、和这一行对齐的地方浮出；
+ * 移开就收起。挂在 .app-menu 里、和主面板并列（主面板会裁切），位置由 menu.ts 算好（inline left / top）。
+ * 带 .menu-panel 类：底色、阴影、圆角、全屏时的深色都和菜单一致
+ */
+.app-menu .menu-tip {
+  /* 按内容变宽、最宽 240px：.app-menu 本身只有按钮那么宽，不写 width 会被挤成一字一行 */
+  width: max-content;
+  min-width: 0;
+  max-width: 240px;
+  max-height: none;
+  padding: 8px 12px;
+  overflow: visible;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+  white-space: normal;
+  pointer-events: none;
+  transform: translate(-4px, -50%);
+  transform-origin: 0 50%;
+}
+
+.app-menu.is-open .menu-tip:not(.is-shown) {
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-4px, -50%);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear 120ms;
+}
+
+.app-menu.is-open .menu-tip.is-shown {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(0, -50%);
+  transition: opacity 140ms ease, transform 160ms ease, visibility 0s linear 0s;
+}
+
+/* 信息卡底部“当前序号 / 系列总幅数”（2026-11-18，原来是“同系列 n 幅”）：等宽数字，翻动时宽度不跳 */
+.info-pos {
+  font-variant-numeric: tabular-nums;
+}

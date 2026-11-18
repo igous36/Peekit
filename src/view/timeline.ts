@@ -15,8 +15,12 @@ import { lang, t } from '../i18n';
 import { r3 } from '../engine/math';
 import { indicator } from '../engine/mapping';
 import { placeLabels, timelineLabels, type TimelineLabel } from '../engine/months';
-import { bucketOf, bucketStart, tickCount, tickPosition } from '../engine/ticks';
+import {
+  bucketOf, bucketStart, tickCount, tickPosition, waveHeight, waveLift, waveSigma, waveStrength, WAVE_WAKE,
+} from '../engine/ticks';
 import { el, svgIcon, ICON_PREV, ICON_NEXT, Styled } from './dom';
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 export interface TimelineFrame {
   works: readonly Work[];
@@ -72,6 +76,10 @@ export class Timeline {
   private markedMembers: readonly number[] | null = null;
   /** 上次标同系列刻度用的颜色（undefined = 还没标过） */
   private markedColor: string | null | undefined = undefined;
+  /** 刻度随滑块起伏（2026-11-18）：轨道宽度（px，缩放窗口时更新）、每根刻度的基础高度、现在被抬起来的刻度 */
+  private trackW = 0;
+  private baseH: number[] = [];
+  private waved: number[] = [];
   private last: TimelineFrame | null = null;
 
   private scrub: { id: number; offset: number } | null = null;
@@ -120,6 +128,7 @@ export class Timeline {
     bar.addEventListener('keydown', this.onBarKey);
     // 轨道宽度变了（窗口缩放）：重新决定哪些月份 / 年份标签放得下；刻度根数要变就重建刻度
     new ResizeObserver(() => {
+      this.trackW = this.track.clientWidth;
       this.layoutLabels();
       if (this.builtFor && tickCount(this.n, this.track.clientWidth) !== this.m) {
         this.builtFor = null;
@@ -196,8 +205,10 @@ export class Timeline {
     this.markedMembers = null;
     this.ticks = [];
     const n = (this.n = works.length);
-    const trackPx = this.track.clientWidth;
+    const trackPx = (this.trackW = this.track.clientWidth);
     const m = (this.m = tickCount(n, trackPx));
+    this.baseH = new Array<number>(m).fill(8);
+    this.waved = [];
     // 刻度按钮的点击区：刻度稀的时候 28px，密的时候缩到刻度间距，免得互相盖住
     const spacing = trackPx > 0 && m > 1 ? trackPx / (m - 1) : 28;
     const hitW = Math.max(6, Math.min(28, Math.floor(spacing)));
@@ -254,9 +265,45 @@ export class Timeline {
       const isCur = b === curB;
       const inSeries = same.has(b);
       const mark = this.ticks[b].mark;
-      mark.set('height', `${isCur ? 18 : inSeries ? 12 : 8}px`);
+      const h = isCur ? 18 : inSeries ? 12 : 8;
+      this.baseH[b] = h;
+      mark.set('height', `${h}px`);
       mark.set('background', isCur ? 'var(--color-tick-current)' : inSeries ? seriesBg : 'var(--color-tick-other)');
     }
+  }
+
+  /**
+   * 刻度随滑块起伏（2026-11-18，规则见 engine/ticks.ts 的 waveLift）：翻动时滑块附近的刻度鼓起一个小山包，跟着滑块走。
+   * 只改山包范围里那几十根刻度的 transform（scaleY，不重排）；停下时强度跟着弹簧降到 0，抬起过的刻度复原。
+   * 减少动态效果时不起伏
+   */
+  private renderWave(indLeft: number, vel: number, n: number): void {
+    const m = this.ticks.length;
+    const w = this.trackW;
+    const strength = reducedMotion.matches ? 0 : waveStrength(vel);
+    const next: number[] = [];
+    if (m > 0 && w > 0 && strength > 0.01) {
+      const spacing = m > 1 ? w / (m - 1) : w;
+      const sigma = waveSigma(spacing);
+      const x = indLeft * w;
+      // 身后的山包最宽 (1 + WAVE_WAKE)σ，3 倍以外几乎为 0
+      const reach = Math.ceil((sigma * (1 + WAVE_WAKE) * 3) / spacing) + 1;
+      const center = Math.round(indLeft * (m - 1));
+      const dir = Math.sign(vel);
+      for (let b = Math.max(0, center - reach); b <= Math.min(m - 1, center + reach); b++) {
+        const lift = waveLift(tickPosition(b, n, m) * w - x, sigma, strength, dir);
+        if (lift < 0.25) continue;
+        const base = this.baseH[b] ?? 8;
+        this.ticks[b].mark.set('transform', `scaleY(${r3(waveHeight(base, lift) / base)})`);
+        next.push(b);
+      }
+    }
+    // 上一帧抬起来、这一帧不在山包里的：复原
+    if (this.waved.length) {
+      const keep = new Set(next);
+      for (const b of this.waved) if (!keep.has(b)) this.ticks[b]?.mark.set('transform', 'none');
+    }
+    this.waved = next;
   }
 
   private leftOf(i: number, n: number): string {
@@ -300,6 +347,7 @@ export class Timeline {
     this.indPos.set('transform', `translateX(${r3(ind.left * 100)}%)`);
     // 宽度只在速度变化时以整数 px 变化，影响范围只有这一个绝对定位元素
     this.indBar.set('width', `${ind.width}px`);
+    this.renderWave(ind.left, f.vel, works.length);
     // 滑块的读屏值（Styled 有缓存，值没变就不写 DOM）
     const w = works[cur];
     this.indBar.attr('aria-valuenow', String(cur + 1));

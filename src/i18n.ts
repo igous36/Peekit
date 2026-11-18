@@ -1,7 +1,7 @@
 // 界面语言。默认跟随系统，切换后记在 localStorage。
 // 静态文案用 data-i18n* 属性标记，切换语言时 applyI18n() 统一刷新；每帧渲染的动态文案直接调用 t()。
 //
-// 2026-11-18：从中文 / English 扩到 10 种——联合国工作语言（中、英、法、俄、西、阿）加德、意、韩、葡。
+// 2026-11-18：从中文 / English 扩到 12 种——联合国工作语言（中、英、法、俄、西、阿）加德、意、韩、葡，再加日语、繁体中文。
 // 中文、英文在这个文件里（中文是基准，键以它为准）；其余在 locales/ 下，每种一个文件。
 // 阿拉伯语只翻译文字，界面布局不做从右到左的镜像（时间轴、卡片的左右有方向含义）。
 
@@ -13,8 +13,11 @@ import { it } from './locales/it';
 import { ko } from './locales/ko';
 import { pt } from './locales/pt';
 import { ru } from './locales/ru';
+import { ja } from './locales/ja';
+import { zhTW } from './locales/zh-TW';
 
-export type Lang = 'zh' | 'en' | 'ar' | 'de' | 'es' | 'fr' | 'it' | 'ko' | 'pt' | 'ru';
+/** zh = 简体中文，zh-TW = 繁体中文 */
+export type Lang = 'zh' | 'zh-TW' | 'en' | 'ar' | 'de' | 'es' | 'fr' | 'it' | 'ja' | 'ko' | 'pt' | 'ru';
 
 const zh = {
   'app.name': 'Peekit',
@@ -25,7 +28,7 @@ const zh = {
   'meter.far': '系列',
   'info.aria': '作品信息',
   'info.edit': '编辑标题和系列',
-  'info.sameSeries': '同系列 {n} 幅',
+  'info.seriesPos': '系列中第 {i} 幅，共 {n} 幅',
   'info.dragDown': '向下拖动查看全部',
   'date.unknown': '日期未知',
   'series.unassigned': '未归类',
@@ -64,7 +67,7 @@ const zh = {
   'empty.or': '或',
   'empty.pickFiles': '选择文件',
   'empty.pickFolder': '选择文件夹',
-  'empty.formats': '支持 PNG、JPG、WebP、GIF、BMP、TIFF、SVG',
+  'empty.formats': '支持 PNG、JPG、WebP、GIF、BMP、TIFF、SVG 和相机 RAW',
   'empty.loading': '正在读取作品…',
   'drop.release': '松开即可导入',
   'import.done': '已导入 {n} 幅',
@@ -111,6 +114,7 @@ const zh = {
   'about.close': '关闭',
   'ctx.copyImage': '复制图像',
   'ctx.saveAs': '将图像另存为…',
+  'ctx.saveRawAs': '将 RAW 原片另存为…',
   'ctx.reveal': '在资源管理器中显示',
   'ctx.removeWork': '从预览集移除',
   'ctx.deleteSeriesKeep': '删除系列，保留照片',
@@ -166,6 +170,13 @@ const zh = {
   'counter.label': '第 {i} 幅，共 {n} 幅',
   'counter.toText': '点击显示为数字',
   'counter.toRing': '点击显示为圆环',
+  'menu.prefs': '偏好设置',
+  'prefs.wheel': '鼠标滚轮',
+  'prefs.wheelFlip': '滚轮切换照片',
+  'prefs.wheelFlipHint': '上下滚动切换上一张 / 下一张；关闭时用来放大缩小。全屏时始终用来缩放',
+  'prefs.wheelFullscreen': '滚轮进入 / 退出全屏',
+  'prefs.wheelFullscreenHint': '放大时继续上滑进入全屏，全屏时继续下滑退出',
+  'prefs.wheelFullscreenOff': '滚轮切换照片时不可用',
 };
 
 export type MessageKey = keyof typeof zh;
@@ -179,7 +190,7 @@ const en: Record<MessageKey, string> = {
   'meter.far': 'Series',
   'info.aria': 'Artwork info',
   'info.edit': 'Edit title and series',
-  'info.sameSeries': '{n} in this series',
+  'info.seriesPos': '{i} of {n} in this series',
   'info.dragDown': 'Drag down to see all',
   'date.unknown': 'Unknown date',
   'series.unassigned': 'Unsorted',
@@ -218,7 +229,7 @@ const en: Record<MessageKey, string> = {
   'empty.or': 'or',
   'empty.pickFiles': 'Choose files',
   'empty.pickFolder': 'Choose folder',
-  'empty.formats': 'PNG, JPG, WebP, GIF, BMP, TIFF and SVG',
+  'empty.formats': 'PNG, JPG, WebP, GIF, BMP, TIFF, SVG and camera RAW',
   'empty.loading': 'Loading your works…',
   'drop.release': 'Release to import',
   'import.done': 'Imported {n}',
@@ -264,6 +275,7 @@ const en: Record<MessageKey, string> = {
   'about.close': 'Close',
   'ctx.copyImage': 'Copy image',
   'ctx.saveAs': 'Save image as…',
+  'ctx.saveRawAs': 'Save RAW original as…',
   'ctx.reveal': 'Show in File Explorer',
   'ctx.removeWork': 'Remove from collection',
   'ctx.deleteSeriesKeep': 'Delete series, keep photos',
@@ -317,22 +329,33 @@ const en: Record<MessageKey, string> = {
   'counter.label': '{i} of {n}',
   'counter.toText': 'Click to show as numbers',
   'counter.toRing': 'Click to show as a ring',
+  'menu.prefs': 'Preferences',
+  'prefs.wheel': 'Mouse wheel',
+  'prefs.wheelFlip': 'Wheel switches photos',
+  'prefs.wheelFlipHint': 'Scroll to go to the previous / next photo; when off, the wheel zooms. In full screen it always zooms',
+  'prefs.wheelFullscreen': 'Wheel enters / exits full screen',
+  'prefs.wheelFullscreenHint': 'Keep scrolling up while enlarged to go full screen; keep scrolling down in full screen to leave',
+  'prefs.wheelFullscreenOff': 'Not available while the wheel switches photos',
 };
 
-export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { zh, en, ar, de, es, fr, it, ko, pt, ru };
+export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {
+  zh, 'zh-TW': zhTW, en, ar, de, es, fr, it, ja, ko, pt, ru,
+};
 
-/** 菜单里的顺序：中文、English，其余按英文名排序 */
-export const LANGS: readonly Lang[] = ['zh', 'en', 'ar', 'de', 'es', 'fr', 'it', 'ko', 'pt', 'ru'];
+/** 菜单里的顺序：简体中文、繁体中文、English，其余按英文名排序 */
+export const LANGS: readonly Lang[] = ['zh', 'zh-TW', 'en', 'ar', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'pt', 'ru'];
 
 /** 每种语言自己的名字（语言菜单里的主标签） */
 export const LANG_NATIVE: Record<Lang, string> = {
   zh: '简体中文',
+  'zh-TW': '繁體中文',
   en: 'English',
   ar: 'العربية',
   de: 'Deutsch',
   es: 'Español',
   fr: 'Français',
   it: 'Italiano',
+  ja: '日本語',
   ko: '한국어',
   pt: 'Português',
   ru: 'Русский',
@@ -340,6 +363,9 @@ export const LANG_NATIVE: Record<Lang, string> = {
 
 /** <html lang> 用的语言标签 */
 export const langTag = (l: Lang): string => (l === 'zh' ? 'zh-CN' : l);
+
+/** 语言名字查询用的代码（简体 / 繁体要分开问） */
+const displayCode = (l: Lang): string => (l === 'zh' ? 'zh-Hans' : l === 'zh-TW' ? 'zh-Hant' : l);
 
 let localNames: { lang: Lang; names: Intl.DisplayNames | null } | null = null;
 
@@ -355,7 +381,7 @@ export function langLocalName(l: Lang): string {
     localNames = { lang: current, names };
   }
   try {
-    return localNames.names?.of(l === 'zh' ? 'zh-Hans' : l) ?? '';
+    return localNames.names?.of(displayCode(l)) ?? '';
   } catch {
     return '';
   }
@@ -367,9 +393,14 @@ const LANG_KEY = 'peekit:lang';
 let current: Lang = detect();
 const listeners = new Set<(l: Lang) => void>();
 
-/** 系统语言（如 zh-CN、pt-BR、de）对应的界面语言；不支持的用英文 */
+/**
+ * 系统语言（如 zh-CN、pt-BR、de）对应的界面语言；不支持的用英文。
+ * 中文分简繁：明确写了繁体（zh-Hant）或台湾 / 香港 / 澳门（zh-TW / HK / MO）用繁体，其余用简体
+ */
 export function langFromLocale(locale: string): Lang {
-  const base = locale.toLowerCase().split(/[-_]/)[0];
+  const lc = locale.toLowerCase().replace(/_/g, '-');
+  if (lc === 'zh' || lc.startsWith('zh-')) return /^zh-(hant|tw|hk|mo)(-|$)/.test(lc) ? 'zh-TW' : 'zh';
+  const base = lc.split('-')[0];
   return isLang(base) ? base : 'en';
 }
 

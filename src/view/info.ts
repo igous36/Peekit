@@ -46,6 +46,8 @@ export interface InfoFrame {
   series: Series;
   /** 同系列总数（含当前） */
   count: number;
+  /** 当前作品在系列里排第几（1 起，按系列的默认顺序：时间先后，和时间轴一致；2026-11-18） */
+  index: number;
   frac: number;
   /** 镜头拉远程度 0–1（系列视图）：“向下拖动查看全部”跟着淡出，回到单幅时再出现 */
   zoom: number;
@@ -160,7 +162,7 @@ export class InfoPanel {
       date,
       source,
     ]);
-    const count = el('span');
+    const count = el('span', { class: 'info-pos' });
     const dragHint = el('span', { 'data-i18n': 'info.dragDown' });
     this.dragHint = new Styled(dragHint);
     this.viewBlock = el('div', { class: 'info-view' }, [
@@ -302,7 +304,11 @@ export class InfoPanel {
     this.source.text(src);
     this.source.attr('title', src);
     this.source.set('display', src ? 'block' : 'none');
-    this.count.text(t('info.sameSeries', { n: f.count }));
+    // 2026-11-18：原来是“同系列 n 幅”，改成“当前在系列里的序号 / 系列总幅数”；完整说法给读屏、悬停时显示
+    this.count.text(`${f.index} / ${f.count}`);
+    const pos = t('info.seriesPos', { i: f.index, n: f.count });
+    this.count.attr('aria-label', pos);
+    this.count.attr('title', pos);
     // 已经在看全部了，提示就没有意义：拉远到一半时完全淡出
     this.dragHint.set('opacity', String(r3(Math.max(0, Math.min(1, 1 - f.zoom / 0.5)))));
     const s = infoSlide(f.frac);

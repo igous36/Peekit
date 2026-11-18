@@ -3,7 +3,7 @@
 import type { Library, Series, Work } from './data/types';
 import { createMotion, type Motion } from './engine/motion';
 import {
-  currentOf, rowFade, headerOpacity, needsOriginalFor, paintingAt, artSize, cameraScale, thumbCaps, thumbPage,
+  currentOf, rowFade, headerOpacity, needsOriginalFor, paintingAt, artSize, cameraScale, thumbCaps, thumbPage, sortedIndexOf,
   type ThumbCaps, type ThumbPage,
 } from './engine/mapping';
 import { cardRect, magnifyTargets } from './engine/magnify';
@@ -241,7 +241,16 @@ export class App {
       version: appVersion,
       openRepo: () => void openExternal(REPO_URL).catch((err) => this.toast.show(t('toast.actionFailed', { msg: String(err) }))),
     });
-    this.switcher = new SetSwitcher({ sets: this.setInfos, switchSet: this.switchSet, newSet: this.newSet });
+    this.switcher = new SetSwitcher({
+      sets: this.setInfos,
+      switchSet: this.switchSet,
+      newSet: this.newSet,
+      // 右键预览集：修改名称 / 创建副本 / 删除（2026-11-18，和左上角菜单里的一样）
+      renameSet: this.renameSet,
+      deleteSet: this.deleteSet,
+      duplicateSet: this.duplicateSet,
+      contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
+    });
     this.hud.setSlot.append(this.switcher.root);
     this.empty = new EmptyState({
       pickFiles: () => void this.importTo('files', this.service.current.id),
@@ -907,23 +916,21 @@ export class App {
     const items: CtxItem[] = [{ caption: displayTitle(w) }];
     if (file) {
       const fail = (err: unknown) => this.toast.show(t('toast.actionFailed', { msg: String(err) }));
+      const saveAs = (src: string) => () =>
+        void saveImageAs(src).then((to) => {
+          if (to) this.toast.show(t('toast.saved', { name: to.split(/[\\/]/).pop() ?? to }));
+        }, fail);
       items.push(
         {
           label: t('ctx.copyImage'),
           icon: ICON_COPY,
           run: () => void this.copyWork(w).then(() => this.toast.show(t('toast.copied')), fail),
         },
-        {
-          label: t('ctx.saveAs'),
-          icon: ICON_DOWNLOAD,
-          run: () =>
-            void saveImageAs(file).then((to) => {
-              if (to) this.toast.show(t('toast.saved', { name: to.split(/[\\/]/).pop() ?? to }));
-            }, fail),
-        },
-        { label: t('ctx.reveal'), icon: ICON_FOLDER, run: () => void revealInFolder(file).catch(fail) },
-        'divider',
+        { label: t('ctx.saveAs'), icon: ICON_DOWNLOAD, run: saveAs(file) },
       );
+      // RAW + JPG 合并成一幅（2026-11-18）：另存为时也可以选同名的 RAW 原片
+      if (w.raw) items.push({ label: t('ctx.saveRawAs'), icon: ICON_DOWNLOAD, run: saveAs(w.raw) });
+      items.push({ label: t('ctx.reveal'), icon: ICON_FOLDER, run: () => void revealInFolder(file).catch(fail) }, 'divider');
     }
     items.push({ label: t('ctx.removeWork'), icon: ICON_TRASH, danger: true, run: () => this.removeWorkAt(index) });
     this.ctxMenu.show(items, x, y, t('ctx.label', { name: displayTitle(w) }));
@@ -1218,7 +1225,9 @@ export class App {
         dirty: this.editDirty,
       };
     }
-    this.info.render({ work: wc, series: sc, count: series.length, frac, zoom: zc, edit });
+    // 当前作品在系列里的序号（系列成员按时间先后排好的下标，二分查找）
+    const index = Math.max(0, sortedIndexOf(series, cur)) + 1;
+    this.info.render({ work: wc, series: sc, count: series.length, index, frac, zoom: zc, edit });
     this.timeline.render({
       works, cur, pos: m.pos, vel: m.posV, labelsVersion: this.labelsVersion, members: series,
       // 同系列刻度用系列的主题色高亮；未归类保持原来的灰色（2026-11-18）

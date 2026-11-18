@@ -47,6 +47,8 @@ export const ICON_TRASH = ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 0
 export const ICON_PLUS = ['M12 5v14', 'M5 12h14'];
 export const ICON_INFO = ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 11v5', 'M12 7.5h.01'];
 export const ICON_COPY = ['M9 9h10v10H9z', 'M5 15V5h10'];
+/** 偏好设置（2026-11-18）：三根滑杆 */
+export const ICON_SLIDERS = ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'];
 export const ICON_DOWNLOAD = ['M12 4v11', 'M7 10l5 5 5-5', 'M5 20h14'];
 export const ICON_FOLDER = ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'];
 export const ICON_REMOVE = ['M5 12h14'];

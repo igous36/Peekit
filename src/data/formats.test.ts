@@ -21,7 +21,8 @@ describe('图片格式', () => {
   });
 
   it('支持的扩展名和 Rust 端一致；拖进来的按扩展名分文件 / 文件夹', () => {
-    expect(IMAGE_EXTS).toEqual(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'svg']);
+    // 2026-11-18 起后面跟着相机 RAW（RAW_EXTS，和 Rust 端 raw.rs 一致）
+    expect(IMAGE_EXTS.slice(0, 9)).toEqual(['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'svg']);
     expect(classifyDropped(['D:\\a.GIF', 'D:\\scans\\b.tiff', 'D:\\art', 'D:\\v1.2']).map((s) => s.kind)).toEqual([
       'file', 'file', 'folder', 'folder',
     ]);
@@ -41,5 +42,22 @@ describe('GIF 在旁边也动：哪些能动、谁先动（2026-11-17）', () =>
     expect(gifCandidates(10, [3, 4, 11], 0, 0)).toEqual([10, 9, 11]);
     expect(gifCandidates(10, [3, 4, 11], 1, 0)).toEqual([10, 9, 11, 3, 4]);
     expect(gifCandidates(10, [3, 4], 1, 0.8)).toEqual([10]);
+  });
+});
+
+describe('相机 RAW（2026-11-18）', () => {
+  it('RAW 也算图片（选文件、拖进来都认），显示方式和 TIFF 一样走显示用大图', async () => {
+    const { RAW_EXTS, isRaw } = await import('./formats');
+    for (const e of ['dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2', 'pef']) {
+      expect(RAW_EXTS).toContain(e);
+      expect(IMAGE_EXTS).toContain(e);
+    }
+    expect(imageKind('D:/a/IMG_1.CR3')).toBe('convert');
+    expect(imageKind('x.NEF')).toBe('convert');
+    expect(isRaw('x.arw') && !isRaw('x.jpg')).toBe(true);
+    expect(classifyDropped(['D:/a/IMG_1.ORF', 'D:/a/folder'])).toEqual([
+      { path: 'D:/a/IMG_1.ORF', kind: 'file' },
+      { path: 'D:/a/folder', kind: 'folder' },
+    ]);
   });
 });

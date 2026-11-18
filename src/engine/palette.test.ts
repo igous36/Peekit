@@ -49,14 +49,15 @@ describe('主题色', () => {
 });
 
 describe('左上角计数圆环（2026-11-18）', () => {
-  it('进度：第 1 幅 0（灰圈），最后一幅满圈，中间按位置连续变化；拖过头不出界；只有一幅时 0', async () => {
+  it('进度：第 1 幅 0（灰圈），最后一幅满圈，中间按位置连续变化；拖过头不出界；只有一幅时满圈（全蓝），没有作品时 0', async () => {
     const { counterProgress } = await import('../view/counter');
     expect(counterProgress(0, 12)).toBe(0);
     expect(counterProgress(11, 12)).toBe(1);
     expect(counterProgress(5.5, 12)).toBeCloseTo(0.5);
     expect(counterProgress(-0.3, 12)).toBe(0);
     expect(counterProgress(11.4, 12)).toBe(1);
-    expect(counterProgress(0, 1)).toBe(0);
+    expect(counterProgress(0, 1)).toBe(1);
+    expect(counterProgress(-0.2, 1)).toBe(1); // 拖过头也还是满圈
     expect(counterProgress(0, 0)).toBe(0);
   });
 

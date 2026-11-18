@@ -59,3 +59,19 @@ describe('外圈跟着翻动转', () => {
     expect(orbitStep(5000, 0)).toBe(-ORBIT_MAX_STEP);
   });
 });
+
+describe('SVG 也取主题色（2026-11-18）', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('SVG 有“缩略图”（就是矢量原图）：停下后也去取色；取不到（测试环境没有画布）退回主色派生', async () => {
+    const calls: [string[], boolean][] = [];
+    const p = new PaletteLoader((c, fast) => calls.push([c, fast]));
+    const svg = { ...work('v', '#4A5A86', 'data:,'), path: 'v.svg' } as Work;
+    p.request(svg, false);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1]).toEqual([fallbackPalette(svg), false]);
+  });
+});

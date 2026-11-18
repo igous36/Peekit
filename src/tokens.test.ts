@@ -32,3 +32,18 @@ describe('超椭圆圆角', () => {
     expect(css).toMatch(/--corner-scale:1\.3\d{3}/);
   });
 });
+
+describe('按界面语言换中日韩字体（2026-11-18）', () => {
+  it('字号简写引用字体族变量；日语、繁体中文、韩语各有自己的系统字体', async () => {
+    const { font, sansByLang } = await import('./tokens');
+    expect(font['font-caption']).toContain('var(--font-family-sans)');
+    expect(font['font-family-sans']).toContain('Microsoft YaHei');
+    const css = tokenCss();
+    expect(css).toContain(':root:lang(ja){--font-family-sans:');
+    expect(css).toContain(':root:lang(zh-TW){--font-family-sans:');
+    expect(sansByLang.ja).toContain('Yu Gothic UI');
+    expect(sansByLang['zh-TW']).toContain('Microsoft JhengHei');
+    // 不打包字体：都是系统自带字体，最后退回 sans-serif
+    for (const f of Object.values(sansByLang)) expect(f.endsWith('sans-serif')).toBe(true);
+  });
+});

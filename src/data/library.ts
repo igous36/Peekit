@@ -59,6 +59,8 @@ export interface ScanItem {
   size: number;
   width: number;
   height: number;
+  /** RAW + JPG 同时拍、合并成一幅时（2026-11-18）：同名 RAW 原片的路径；这幅本身是 JPG */
+  raw?: string;
 }
 
 export function emptySaved(): SavedLibrary {
@@ -224,6 +226,8 @@ export function mergeScan(
       height: it.height,
     };
     if (prev?.customTitle) w.customTitle = prev.customTitle;
+    // RAW + JPG 合并成一幅时，同名 RAW 原片的路径（每次扫描都重新配对，不存盘）
+    if (it.raw) w.raw = it.raw;
     works.push(w);
   }
 

@@ -4,9 +4,13 @@
 // - web：PNG / JPG / WebP / BMP，界面（WebView2）能直接显示原图，放大查看时停 300ms 换原图
 // - gif：同上，而且停在它上面时总是换原图，让动图动起来（缩略图是第一帧）
 // - svg：矢量原图本身就当缩略图用，多大都清晰，不需要再换“原图”
-// - convert：TIFF，界面不能直接显示；放大查看 / 复制图像时由 Rust 端生成显示用大图（make_display）
+// - convert：TIFF 和相机 RAW（2026-11-18），界面不能直接显示；放大查看 / 复制图像时由 Rust 端生成显示用大图（make_display）。
+//   RAW 不解码 RAW 本身，用相机写在文件里的 JPEG 预览（见 src-tauri/src/raw.rs）
 
-export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'svg'];
+/** 相机 RAW 的扩展名，和 Rust 端 raw.rs 的 RAW_EXTS 一致 */
+export const RAW_EXTS = ['dng', 'cr2', 'cr3', 'nef', 'nrw', 'arw', 'sr2', 'raf', 'orf', 'rw2', 'pef', 'srw'];
+
+export const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'svg', ...RAW_EXTS];
 
 export type ImageKind = 'web' | 'gif' | 'svg' | 'convert';
 
@@ -20,9 +24,11 @@ export function imageKind(path: string): ImageKind {
   const ext = extOf(path);
   if (ext === 'gif') return 'gif';
   if (ext === 'svg') return 'svg';
-  if (ext === 'tif' || ext === 'tiff') return 'convert';
+  if (ext === 'tif' || ext === 'tiff' || RAW_EXTS.includes(ext)) return 'convert';
   return 'web';
 }
+
+export const isRaw = (path: string): boolean => RAW_EXTS.includes(extOf(path));
 
 // ───────────── 不是主预览图的 GIF 也动起来（2026-11-17） ─────────────
 //

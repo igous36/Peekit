@@ -27,8 +27,10 @@ export class Flyout {
     /** 每次打开 / 刷新时重建内容 */
     private build: () => Node[],
     private label: () => string,
+    /** 额外的类名（比如语言列表要按内容变宽） */
+    extraClass = '',
   ) {
-    this.el = el('div', { class: 'menu-panel menu-flyout', role: 'menu' });
+    this.el = el('div', { class: `menu-panel menu-flyout ${extraClass}`.trim(), role: 'menu' });
     this.el.addEventListener('keydown', this.onKey);
     this.el.addEventListener('pointerenter', () => window.clearTimeout(this.closeTimer));
     this.el.addEventListener('pointerleave', () => this.scheduleClose());

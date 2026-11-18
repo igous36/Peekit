@@ -22,19 +22,22 @@
 // 进出二级视图时有过渡（2026-11-17 新增）：旧内容滑出淡出、新内容从另一侧滑入，面板高度跟着过渡。
 import { LANGS, lang, langLocalName, LANG_NATIVE, langTag, setLang, t, type MessageKey } from '../i18n';
 import { setThemePref, themePref } from '../theme';
-import { SET_NAME_MAX } from '../data/sets';
+import { prefs, setPref, wheelCanToggleFullscreen, type Prefs } from '../prefs';
 import {
-  el, svgIcon, ICON_CHECK, ICON_COPY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_TRASH,
+  el, svgIcon, ICON_CHECK, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_SLIDERS, ICON_TRASH,
 } from './dom';
 import { Dropdown } from './dropdown';
 import { Flyout } from './flyout';
 import { ThemeSwitch } from './theme-switch';
 import { menuPoint, type CtxItem } from './context-menu';
+import { setConfirmRow, setContextItems, setRenameRow } from './set-rows';
 
 const ICON_MENU = ['M4 7h16', 'M4 12h16', 'M4 17h16'];
 
 /** 进出二级视图的过渡时长（ms），和 CSS 里的 menu-in / menu-out 一致 */
 const VIEW_MS = 220;
+/** 偏好设置的说明：悬停这么久才浮出来（快速划过不闪） */
+const TIP_DELAY = 250;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 export interface SetInfo {
@@ -45,6 +48,8 @@ export interface SetInfo {
 }
 
 export type ImportKind = 'files' | 'folder';
+/** 菜单面板现在显示哪一页：主视图、“导入到…”二级视图、偏好设置（2026-11-18） */
+type MenuView = 'main' | ImportKind | 'prefs';
 
 export interface MenuHandlers {
   sets: () => SetInfo[];
@@ -68,12 +73,14 @@ export class AppMenu {
   readonly root: HTMLElement;
   private panel: HTMLElement;
   private dropdown: Dropdown;
-  private view: 'main' | ImportKind = 'main';
+  private view: MenuView = 'main';
   private editing: string | null = null;
   private confirming: string | null = null;
   private viewFly: Flyout;
   private langFly: Flyout;
   private themeSwitch: ThemeSwitch;
+  /** 偏好设置说明的浮动标签（和子菜单一样挂在菜单根节点里，主面板会裁切） */
+  private tip: HTMLElement;
 
   constructor(private handlers: MenuHandlers) {
     const button = el(
@@ -88,7 +95,8 @@ export class AppMenu {
       [svgIcon(ICON_MENU, 18)],
     );
     this.panel = el('div', { id: 'app-menu', class: 'menu-panel', role: 'menu', 'data-i18n-aria': 'menu.open' });
-    this.root = el('div', { class: 'app-menu' }, [button, this.panel]);
+    this.tip = el('div', { class: 'menu-panel menu-tip', 'aria-hidden': 'true' });
+    this.root = el('div', { class: 'app-menu' }, [button, this.panel, this.tip]);
     this.dropdown = new Dropdown(this.root, button, this.panel, () => {
       this.view = 'main';
       this.editing = null;
@@ -98,7 +106,8 @@ export class AppMenu {
     });
     this.themeSwitch = new ThemeSwitch((p) => setThemePref(p));
     this.viewFly = new Flyout(this.root, () => this.viewItems(), () => t('menu.view'));
-    this.langFly = new Flyout(this.root, () => this.langItems(), () => t('view.language'));
+    // 语言列表按内容变宽（最宽 320px）：本族语名字永远完整显示，灰色副标签放不下才省略
+    this.langFly = new Flyout(this.root, () => this.langItems(), () => t('view.language'), 'menu-flyout--lang');
     this.viewFly.child = this.langFly;
   }
 
@@ -109,7 +118,9 @@ export class AppMenu {
   // ───────────── 构建面板 ─────────────
 
   private rebuild(): void {
-    this.panel.replaceChildren(...(this.view === 'main' ? this.mainView() : this.importView(this.view)));
+    this.hideTip();
+    const v = this.view;
+    this.panel.replaceChildren(...(v === 'main' ? this.mainView() : v === 'prefs' ? this.prefsView() : this.importView(v)));
     // “查看”子菜单跟到新的那一项上（开着就刷新内容）；不在主视图就收起
     const anchor = this.panel.querySelector<HTMLElement>('[data-flyout="view"]');
     if (anchor) {
@@ -120,7 +131,7 @@ export class AppMenu {
     }
   }
 
-  private go(view: 'main' | ImportKind, focus?: (el: HTMLElement) => boolean): void {
+  private go(view: MenuView, focus?: (el: HTMLElement) => boolean): void {
     // 进二级：旧内容往左滑出、新内容从右滑入；返回反过来
     this.slide(view === 'main' ? -1 : 1, () => {
       this.view = view;
@@ -203,6 +214,11 @@ export class AppMenu {
         this.handlers.newSet();
       }, { icon: ICON_PLUS, cls: 'menu-item--new' }),
       this.divider(),
+      // 偏好设置（2026-11-18）：二级视图，和“导入到…”一样滑进去
+      this.item(t('menu.prefs'), () => this.go('prefs', (x) => x.dataset.pref === 'wheelFlip'), {
+        icon: ICON_SLIDERS,
+        trail: el('span', { class: 'menu-trail' }, [svgIcon(ICON_NEXT, 14)]),
+      }),
       this.item(t('about.menu'), () => {
         this.dropdown.close(false);
         this.handlers.about();
@@ -240,12 +256,15 @@ export class AppMenu {
       const native = LANG_NATIVE[l];
       const local = langLocalName(l);
       const label = el('span', { class: 'menu-label', lang: langTag(l) }, [native]);
+      const extra = local && local !== native ? local : '';
       const b = el('button', {
-        type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(on), 'data-lang': l,
+        type: 'button', class: 'menu-item menu-item--lang', role: 'menuitemradio', 'aria-checked': String(on), 'data-lang': l,
+        // 灰色副标签可能被省略：悬停显示完整的
+        title: extra ? `${native} — ${extra}` : native,
       }, [
         el('span', { class: 'menu-lead' }, on ? [svgIcon(ICON_CHECK, 16)] : []),
         label,
-        ...(local && local !== native ? [el('span', { class: 'menu-trail' }, [local])] : []),
+        ...(extra ? [el('span', { class: 'menu-trail' }, [el('span', { class: 'menu-trail-text' }, [extra])])] : []),
       ]);
       b.addEventListener('click', () => {
         if (lang() === l) return;
@@ -265,21 +284,15 @@ export class AppMenu {
     e.preventDefault();
     e.stopPropagation();
     const { x, y } = menuPoint(e, target);
-    const items: CtxItem[] = [
-      { caption: s.name },
-      { label: t('ctx.renameSet'), icon: ICON_PENCIL, run: () => this.beginRename(s.id) },
-      {
-        label: t('ctx.duplicateSet'),
-        icon: ICON_COPY,
-        run: () => {
-          const id = this.handlers.duplicateSet(s.id);
-          this.rebuild();
-          this.dropdown.focusItem((x) => x.dataset.set === id);
-        },
+    const items = setContextItems(s, {
+      rename: () => this.beginRename(s.id),
+      duplicate: () => {
+        const id = this.handlers.duplicateSet(s.id);
+        this.rebuild();
+        this.dropdown.focusItem((x) => x.dataset.set === id);
       },
-      'divider',
-      { label: t('ctx.deleteSet'), icon: ICON_TRASH, danger: true, run: () => this.beginDelete(s.id) },
-    ];
+      remove: () => this.beginDelete(s.id),
+    });
     this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));
   }
 
@@ -337,59 +350,140 @@ export class AppMenu {
   }
 
   private renameRow(s: SetInfo): HTMLElement {
-    const input = el('input', {
-      type: 'text', class: 'menu-input', value: s.name, maxlength: SET_NAME_MAX,
-      'aria-label': t('sets.rename', { name: s.name }), placeholder: t('sets.namePlaceholder'),
-      autocomplete: 'off', spellcheck: 'false',
-    });
-    let done = false;
-    const finish = (commit: boolean) => {
-      if (done) return;
-      done = true;
-      if (commit) this.handlers.renameSet(s.id, input.value);
+    return setRenameRow(s, (commit, value) => {
+      if (commit) this.handlers.renameSet(s.id, value);
       this.editing = null;
       this.rebuild();
       this.dropdown.focusItem((x) => x.dataset.rename === s.id);
-    };
-    input.addEventListener('keydown', (e) => {
-      // 中文输入法组字时的回车是选字
-      if (e.isComposing || e.keyCode === 229) return;
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        finish(true);
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        finish(false);
-      }
     });
-    input.addEventListener('blur', () => finish(true));
-    return el('div', { class: 'menu-set menu-set--editing', role: 'none' }, [input]);
   }
 
   private confirmRow(s: SetInfo): HTMLElement {
-    const cancel = el('button', { type: 'button', class: 'menu-confirm-btn', role: 'menuitem', 'data-cancel': s.id }, [
-      t('sets.cancel'),
-    ]);
-    const ok = el('button', { type: 'button', class: 'menu-confirm-btn menu-confirm-btn--danger', role: 'menuitem' }, [
-      t('sets.confirmDelete'),
-    ]);
-    cancel.addEventListener('click', () => {
-      this.confirming = null;
-      this.rebuild();
-      this.dropdown.focusItem((x) => x.dataset.delete === s.id);
+    return setConfirmRow(
+      s,
+      () => {
+        this.confirming = null;
+        this.rebuild();
+        this.dropdown.focusItem((x) => x.dataset.delete === s.id);
+      },
+      () => {
+        this.confirming = null;
+        this.handlers.deleteSet(s.id);
+        this.rebuild();
+        this.dropdown.focusItem();
+      },
+    );
+  }
+
+  // ───────────── 偏好设置（2026-11-18） ─────────────
+  //
+  //   ‹ 偏好设置
+  //   ───────
+  //   鼠标滚轮
+  //   滚轮切换照片                 ( ○)   ← 打开：往下滚下一张、往上滚上一张；关闭（默认）：滚轮推拉镜头。全屏时始终是缩放
+  //   上下滚动切换上一张 / 下一张…
+  //   滚轮进入 / 退出全屏           (● )   ← 上面打开时显示成关、变灰；上面关掉后恢复成原来设的值（单独存，见 prefs.ts）
+  //   放大时继续上滑进入全屏…
+
+  private prefsView(): HTMLElement[] {
+    const title = t('menu.prefs');
+    const back = this.item(title, () => this.go('main', (x) => x.textContent === title), {
+      icon: ICON_PREV,
+      cls: 'menu-item--back',
     });
-    ok.addEventListener('click', () => {
-      this.confirming = null;
-      this.handlers.deleteSet(s.id);
-      this.rebuild();
-      this.dropdown.focusItem();
-    });
-    return el('div', { class: 'menu-confirm', role: 'none' }, [
-      el('p', { class: 'menu-confirm-title' }, [t('sets.deleteConfirm', { name: s.name })]),
-      el('p', { class: 'menu-confirm-hint' }, [t('sets.deleteHint')]),
-      el('div', { class: 'menu-confirm-actions', role: 'none' }, [cancel, ok]),
+    back.setAttribute('aria-label', `${t('menu.back')}：${title}`);
+    const flip = this.prefRow('wheelFlip', t('prefs.wheelFlip'), () => setPref('wheelFlip', !prefs().wheelFlip));
+    const fs = this.prefRow('wheelFullscreen', t('prefs.wheelFullscreen'), () =>
+      setPref('wheelFullscreen', !prefs().wheelFullscreen),
+    );
+    const rows = [back, this.divider(), this.caption('prefs.wheel'), flip, fs];
+    this.syncPrefs(rows);
+    return rows;
+  }
+
+  /** 一行偏好：整行是按钮（点哪里都切换），左边名字 + 说明，右边开关 */
+  private prefRow(key: keyof Prefs, label: string, toggle: () => void): HTMLButtonElement {
+    const b = el('button', { type: 'button', class: 'menu-item menu-pref', role: 'menuitemcheckbox', 'data-pref': key }, [
+      el('span', { class: 'menu-pref-text' }, [
+        el('span', { class: 'menu-pref-label' }, [label]),
+        el('span', { class: 'menu-pref-hint' }),
+      ]),
+      el('span', { class: 'toggle', 'aria-hidden': 'true' }, [el('span', { class: 'toggle-knob' })]),
     ]);
+    b.addEventListener('click', () => {
+      // 变灰的项（滚轮切换照片时的“滚轮进入 / 退出全屏”）点了没反应；不用 disabled 属性，是为了悬停时还能显示说明
+      if (b.getAttribute('aria-disabled') === 'true') return;
+      toggle();
+      // 原地更新（不重建），开关带动画滑过去；下面那一项跟着变灰 / 恢复
+      this.syncPrefs([...this.panel.querySelectorAll<HTMLElement>('.menu-pref')]);
+      if (this.tipFor) this.showTip(this.tipFor, true);
+    });
+    // 说明文字（2026-11-18 改）：不常驻，悬停 / 键盘聚焦在这一行时，在菜单右边浮出一个小标签
+    b.addEventListener('pointerenter', () => this.showTip(b));
+    b.addEventListener('pointerleave', () => this.hideTip(b));
+    b.addEventListener('focus', () => {
+      if (b.matches(':focus-visible')) this.showTip(b, true);
+    });
+    b.addEventListener('blur', () => this.hideTip(b));
+    return b;
+  }
+
+  // ───────────── 偏好说明的浮动标签 ─────────────
+
+  private tipTimer = 0;
+  /** 现在显示的是哪一行的说明 */
+  private tipFor: HTMLElement | null = null;
+
+  /** 停 TIP_DELAY 后（now = 立刻）在菜单面板右边、和这一行对齐的地方显示说明 */
+  private showTip(row: HTMLElement, now = false): void {
+    window.clearTimeout(this.tipTimer);
+    const show = () => {
+      if (!row.isConnected) return;
+      const text = row.querySelector('.menu-pref-hint')?.textContent ?? '';
+      if (!text) return;
+      this.tip.textContent = text;
+      const hr = this.root.getBoundingClientRect();
+      const pr = this.panel.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
+      this.tip.style.left = `${Math.round(pr.right + 8 - hr.left)}px`;
+      this.tip.style.top = `${Math.round(rr.top + rr.height / 2 - hr.top)}px`;
+      this.tip.classList.add('is-shown');
+      this.tipFor = row;
+    };
+    if (now || this.tip.classList.contains('is-shown')) show();
+    else this.tipTimer = window.setTimeout(show, TIP_DELAY);
+  }
+
+  private hideTip(row?: HTMLElement): void {
+    if (row && this.tipFor && row !== this.tipFor && this.tip.classList.contains('is-shown')) return;
+    window.clearTimeout(this.tipTimer);
+    this.tip.classList.remove('is-shown');
+    this.tipFor = null;
+  }
+
+  /** 按当前偏好更新几行开关的状态、说明文字、能不能点 */
+  private syncPrefs(rows: HTMLElement[]): void {
+    const p = prefs();
+    const state: Record<keyof Prefs, { on: boolean; disabled: boolean; hint: string }> = {
+      wheelFlip: { on: p.wheelFlip, disabled: false, hint: t('prefs.wheelFlipHint') },
+      // 滚轮切换照片时：显示成关、变灰（存的值不动，关掉切换照片后恢复）
+      wheelFullscreen: {
+        on: wheelCanToggleFullscreen(p),
+        disabled: p.wheelFlip,
+        hint: t(p.wheelFlip ? 'prefs.wheelFullscreenOff' : 'prefs.wheelFullscreenHint'),
+      },
+    };
+    for (const row of rows) {
+      const key = row.dataset.pref as keyof Prefs | undefined;
+      if (!key || !(key in state)) continue;
+      const s = state[key];
+      row.setAttribute('aria-checked', String(s.on));
+      row.querySelector('.toggle')?.classList.toggle('is-on', s.on);
+      row.classList.toggle('is-disabled', s.disabled);
+      row.setAttribute('aria-disabled', String(s.disabled));
+      const hint = row.querySelector('.menu-pref-hint');
+      if (hint) hint.textContent = s.hint;
+    }
   }
 
   private importView(kind: ImportKind): HTMLElement[] {
