@@ -8,25 +8,25 @@ Peekit is a desktop viewer for artists to browse their own work. You push the pa
 
 ## Features
 
-- **Timeline browsing**: 1:1 drag with spring physics, inertia snapping and rubber-banding at both ends. Up to three paintings sit in front of the glass; the rest sink behind it while the glass tiles part around them and close again when you stop.
-- **Series view**: drag down (or press ↓) to zoom out and see every work in the same series.
-- **Enlarge and fullscreen**: hold, drag up or scroll up to enlarge a painting; keep going (or double-click / F11) for fullscreen on a dark background, where the mouse wheel zooms around the cursor and you can drag to pan.
-- **Your own library**: import image files or whole folders (menu or drag & drop). Folders are remembered and rescanned on launch or with View → Refresh (F5). Supports PNG, JPG, WebP, GIF (animated), BMP, TIFF, SVG and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF and more, shown from the embedded preview; a RAW + JPG pair with the same name counts as one work).
-- **Collections**: keep separate preview collections and switch between them; create, rename, duplicate and delete them from the menu.
-- **Dates from metadata**: EXIF, then XMP, then the file's modified time. Works are ordered from oldest to newest.
-- **Series and titles**: rename series, move works between series, create new ones; give any work a custom title while keeping the original file name. Works imported from a folder are grouped into a series named after that folder.
-- **Cards follow the artwork's aspect ratio**, with the same visual weight for portrait, square and landscape pieces.
-- **Fast**: native TypeScript and plain DOM + CSS transforms, one `requestAnimationFrame` loop that stops when everything is at rest. 1600 px WebP thumbnails are generated and cached by the Rust side.
-- **Keyboard, mouse and trackpad**: ← → to switch; ↑ ↓ to move between series, single, enlarged and fullscreen views; Esc to go back; F11 for fullscreen; F5 to refresh. Each mouse-wheel notch moves one level; two-finger swipes work on a trackpad.
-- **12 interface languages**: Simplified Chinese, Traditional Chinese, English, Japanese, Arabic, French, Russian, Spanish, German, Italian, Korean and Portuguese, following the system language by default.
-- **Light, dark or system** appearance.
-- **Preferences**: make the mouse wheel switch paintings instead of zooming, and choose whether it can enter / leave fullscreen.
-- **Automatic updates**: on startup Peekit asks GitHub whether a new release is out and puts a dot on the ☰ menu. One click downloads the signed installer, and Peekit reopens on the new version. Checking can be turned off in Preferences; nothing is downloaded until you choose to update.
+- Timeline browsing: 1:1 drag with spring physics, inertia snapping and rubber-banding at both ends. Up to three paintings sit in front of the glass; the rest sink behind it while the glass tiles part around them and close again when you stop.
+- Series view: drag down (or press ↓) to zoom out and see every work in the same series.
+- Enlarge and fullscreen: hold, drag up or scroll up to enlarge a painting; keep going (or double-click / F11) for fullscreen on a dark background, where the mouse wheel zooms around the cursor and you can drag to pan.
+- Your own library: import image files or whole folders (menu or drag & drop). Folders are remembered and rescanned on launch or with View → Refresh (F5). Supports PNG, JPG, WebP, GIF (animated), BMP, TIFF, SVG and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF and more, shown from the embedded preview; a RAW + JPG pair with the same name counts as one work).
+- Collections: keep separate preview collections and switch between them; create, rename, duplicate and delete them from the menu.
+- Dates from metadata: EXIF, then XMP, then the file's modified time. Works are ordered from oldest to newest.
+- Series and titles: rename series, move works between series, create new ones; give any work a custom title while keeping the original file name. Works imported from a folder are grouped into a series named after that folder.
+- Cards follow the artwork's aspect ratio, so portrait, square and landscape pieces carry the same visual weight.
+- Fast: native TypeScript and plain DOM + CSS transforms, one `requestAnimationFrame` loop that stops when everything is at rest. 1600 px WebP thumbnails are generated and cached by the Rust side.
+- Keyboard, mouse and trackpad: ← → to switch; ↑ ↓ to move between series, single, enlarged and fullscreen views; Esc to go back; F11 for fullscreen; F5 to refresh. Each mouse-wheel notch moves one level; two-finger swipes work on a trackpad.
+- 12 interface languages: Simplified Chinese, Traditional Chinese, English, Japanese, Arabic, French, Russian, Spanish, German, Italian, Korean and Portuguese, following the system language by default.
+- Light, dark or system appearance.
+- Preferences: make the mouse wheel switch paintings instead of zooming, and choose whether it can enter / leave fullscreen.
+- Automatic updates: on startup Peekit asks GitHub whether a new release is out and puts a dot on the ☰ menu. One click downloads the signed installer, and Peekit reopens on the new version. Checking can be turned off in Preferences; nothing is downloaded until you choose to update.
 - Respects the system's *reduce motion* setting.
 
 ## Tech stack
 
-- [Tauri 2](https://tauri.app/) (Rust) + [Vite](https://vite.dev/) + native TypeScript — no UI framework, no 3D engine
+- [Tauri 2](https://tauri.app/) (Rust) + [Vite](https://vite.dev/) + native TypeScript, with no UI framework and no 3D engine
 - Rust: `image` + `webp` for thumbnails, `kamadak-exif` for dates, `tauri-plugin-store` for saving, `tauri-plugin-dialog` for file pickers, `tauri-plugin-updater` for signed updates
 
 ## Development
@@ -69,10 +69,12 @@ src/                 front end (TypeScript)
   data/              library model, saving, import, thumbnail queue
   locales/           interface translations (Chinese and English live in i18n.ts)
   app.ts, controller.ts, i18n.ts, tokens.ts
-src-tauri/src/       Rust: folder scanning, dates, thumbnails
+src-tauri/src/       Rust: folder scanning, dates, thumbnails, RAW previews
+scripts/release.mjs  signed release build
 design/              original interactive prototype and spec boards
-HANDOFF.md           full design & development spec (layout, tokens, motion, algorithms)
-CLAUDE.md            architecture notes
+ARCHITECTURE.md      how the code is organized, how a frame is drawn, storage, releases (Chinese)
+HANDOFF.md           design spec: layout, tokens, motion, algorithms (Chinese)
+CLAUDE.md            working notes for Claude Code
 docs/                the original design hand-off notes
 ```
 

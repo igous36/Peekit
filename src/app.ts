@@ -856,7 +856,7 @@ export class App {
 
   /**
    * 更新自测（环境变量 PEEKIT_UPDATE_PROBE）：check 只检查；download 再下载、验签（不安装）；install 下载后直接安装。
-   * 每一步打到终端，前缀“[更新自测]”。用法见 HANDOFF §12 自动更新一节。
+   * 每一步打到终端，前缀“[更新自测]”。用法见 ARCHITECTURE.md 的“测试和调试”。
    */
   private async runUpdateProbe(mode: string): Promise<void> {
     const log = (m: string) => logInfo(`[更新自测] ${m}`);
