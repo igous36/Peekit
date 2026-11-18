@@ -24,8 +24,10 @@ import { LANGS, lang, langLocalName, LANG_NATIVE, langTag, setLang, t, type Mess
 import { setThemePref, themePref } from '../theme';
 import { prefs, setPref, wheelCanToggleFullscreen, type Prefs } from '../prefs';
 import {
-  el, svgIcon, ICON_CHECK, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_SLIDERS, ICON_TRASH,
+  el, svgIcon, ICON_CHECK, ICON_DOWNLOAD, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_SLIDERS, ICON_TRASH,
 } from './dom';
+import { percentOf, type UpdateState } from '../updater';
+import { showsUpdateRow, updateRowLabel } from './update-labels';
 import { Dropdown } from './dropdown';
 import { Flyout } from './flyout';
 import { ThemeSwitch } from './theme-switch';
@@ -67,6 +69,8 @@ export interface MenuHandlers {
   contextMenu: (items: CtxItem[], x: number, y: number, label: string) => void;
   /** 打开“关于 Peekit” */
   about: () => void;
+  /** 下载并安装新版本（菜单顶上的“更新到 x.y.z”） */
+  installUpdate: () => void;
 }
 
 export class AppMenu {
@@ -81,6 +85,9 @@ export class AppMenu {
   private themeSwitch: ThemeSwitch;
   /** 偏好设置说明的浮动标签（和子菜单一样挂在菜单根节点里，主面板会裁切） */
   private tip: HTMLElement;
+  private button: HTMLButtonElement;
+  /** 自动更新的状态（app 订阅 Updater 后传进来） */
+  private update: UpdateState = { kind: 'idle' };
 
   constructor(private handlers: MenuHandlers) {
     const button = el(
@@ -94,6 +101,7 @@ export class AppMenu {
       },
       [svgIcon(ICON_MENU, 18)],
     );
+    this.button = button;
     this.panel = el('div', { id: 'app-menu', class: 'menu-panel', role: 'menu', 'data-i18n-aria': 'menu.open' });
     this.tip = el('div', { class: 'menu-panel menu-tip', 'aria-hidden': 'true' });
     this.root = el('div', { class: 'app-menu' }, [button, this.panel, this.tip]);
@@ -200,13 +208,17 @@ export class AppMenu {
     const chevron = () => el('span', { class: 'menu-trail' }, [svgIcon(ICON_NEXT, 14)]);
     const view = this.item(t('menu.view'), () => {}, { trail: chevron() });
     view.dataset.flyout = 'view';
-    const out: HTMLElement[] = [
+    const out: HTMLElement[] = [];
+    // 有新版本时，最上面一行“更新到 x.y.z”（2026-11-18 自动更新）
+    const update = this.updateRow();
+    if (update) out.push(update, this.divider());
+    out.push(
       this.item(t('menu.importFilesTo'), () => this.go('files'), { trail: chevron() }),
       this.item(t('menu.importFolderTo'), () => this.go('folder'), { trail: chevron() }),
       view,
       this.divider(),
       this.caption('sets.title'),
-    ];
+    );
     for (const s of this.handlers.sets()) out.push(this.setRow(s));
     out.push(
       this.item(t('sets.new').replace(/^\+\s*/, ''), () => {
@@ -225,6 +237,56 @@ export class AppMenu {
       }, { icon: ICON_INFO }),
     );
     return out;
+  }
+
+  // ───────────── 自动更新 ─────────────
+
+  /** 自动更新的状态变了：≡ 按钮上的蓝点、读屏名字，菜单开着时原地更新那一行（下载进度） */
+  setUpdate(s: UpdateState): void {
+    const had = showsUpdateRow(this.update);
+    this.update = s;
+    const has = showsUpdateRow(s);
+    const key: MessageKey = has ? 'menu.openUpdate' : 'menu.open';
+    this.button.classList.toggle('has-update', has);
+    this.button.dataset.i18nAria = key;
+    this.button.dataset.i18nTitle = key;
+    this.button.setAttribute('aria-label', t(key));
+    this.button.title = t(key);
+    const row = this.panel.querySelector<HTMLElement>('[data-update]');
+    if (row && has) this.paintUpdateRow(row);
+    else if (had !== has && this.isOpen && this.view === 'main' && !this.editing && !this.confirming) this.rebuild();
+  }
+
+  private updateRow(): HTMLElement | null {
+    if (!showsUpdateRow(this.update)) return null;
+    const b = this.item('', () => {
+      // 下载 / 安装中点了没反应（进度在底部提示条里）
+      if (b.getAttribute('aria-disabled') === 'true') return;
+      this.dropdown.close(true);
+      this.handlers.installUpdate();
+    }, {
+      icon: ICON_DOWNLOAD,
+      cls: 'menu-item--update',
+      trail: el('span', { class: 'menu-trail' }, [el('span', { class: 'menu-update-dot', 'aria-hidden': 'true' })]),
+    });
+    b.dataset.update = '';
+    this.paintUpdateRow(b);
+    return b;
+  }
+
+  private paintUpdateRow(b: HTMLElement): void {
+    const s = this.update;
+    const busy = s.kind === 'downloading' || s.kind === 'installing';
+    const label = b.querySelector('.menu-label');
+    if (label) label.textContent = updateRowLabel(s);
+    b.classList.toggle('is-busy', busy);
+    b.classList.toggle('is-failed', s.kind === 'failed');
+    b.setAttribute('aria-disabled', String(busy));
+    // 下载进度画在这一行底部（细线）
+    const p = s.kind === 'downloading' ? percentOf(s.got, s.total) : s.kind === 'installing' ? 100 : null;
+    b.style.setProperty('--update-p', p === null ? '0' : String(p / 100));
+    if (s.kind === 'failed') b.title = s.msg;
+    else b.removeAttribute('title');
   }
 
   // ───────────── 查看（级联子菜单） ─────────────
@@ -396,7 +458,9 @@ export class AppMenu {
     const fs = this.prefRow('wheelFullscreen', t('prefs.wheelFullscreen'), () =>
       setPref('wheelFullscreen', !prefs().wheelFullscreen),
     );
-    const rows = [back, this.divider(), this.caption('prefs.wheel'), flip, fs];
+    // 自动检查更新（2026-11-18）：只查不下载，关掉后还能在“关于”里手动检查
+    const auto = this.prefRow('autoUpdate', t('prefs.autoUpdate'), () => setPref('autoUpdate', !prefs().autoUpdate));
+    const rows = [back, this.divider(), this.caption('prefs.wheel'), flip, fs, this.divider(), this.caption('prefs.update'), auto];
     this.syncPrefs(rows);
     return rows;
   }
@@ -472,6 +536,7 @@ export class AppMenu {
         disabled: p.wheelFlip,
         hint: t(p.wheelFlip ? 'prefs.wheelFullscreenOff' : 'prefs.wheelFullscreenHint'),
       },
+      autoUpdate: { on: p.autoUpdate, disabled: false, hint: t('prefs.autoUpdateHint') },
     };
     for (const row of rows) {
       const key = row.dataset.pref as keyof Prefs | undefined;

@@ -55,6 +55,11 @@ export class LibraryService {
     this.current.count = n;
   }
 
+  /** 马上写盘（自动更新安装前） */
+  async flush(): Promise<void> {
+    await this.store?.flush();
+  }
+
   /** 编辑之后保存 */
   save(lib: Library): void {
     if (this.frozen) return;

@@ -3,6 +3,7 @@ import { invoke, convertFileSrc, isTauri } from '@tauri-apps/api/core';
 import type { ScanItem, Source } from './library';
 import { t } from '../i18n';
 import { IMAGE_EXTS, extOf } from './formats';
+import type { UpdaterDeps } from '../updater';
 
 export { IMAGE_EXTS };
 
@@ -102,6 +103,30 @@ export function setThemeBackground(dark: boolean): void {
  */
 export function makeDisplay(path: string, mtime: number, size: number, full: boolean): Promise<string> {
   return invoke<string>('make_display', { path, mtime, size, full });
+}
+
+/** 自动更新用到的 Tauri 调用（2026-11-18）；浏览器预览里检查直接失败 */
+export function updaterDeps(beforeInstall: () => Promise<void>): UpdaterDeps {
+  return {
+    check: async () => {
+      if (!isTauri()) throw new Error('只有桌面版能检查更新');
+      const { check } = await import('@tauri-apps/plugin-updater');
+      return check({ timeout: 30000 });
+    },
+    beforeInstall,
+    restart: () => invoke('restart_app'),
+  };
+}
+
+/** 更新自测模式（环境变量 PEEKIT_UPDATE_PROBE：check / download / install），没设是空字符串 */
+export async function updateProbeMode(): Promise<string> {
+  if (!isTauri()) return '';
+  return invoke<string>('update_probe').catch(() => '');
+}
+
+/** 打一行日志到终端（stdout） */
+export function logInfo(msg: string): void {
+  if (isTauri()) void invoke('log_info', { msg }).catch(() => {});
 }
 
 /** 原图另存为：Rust 端弹系统的保存对话框再复制文件。返回保存到的路径，取消时为 null */

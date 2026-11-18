@@ -739,3 +739,36 @@ Tauri 的 asset 协议会先把请求路径规范化（解开符号链接 / 目�
 - 浏览器实测（1440×900）：浅色下字标在 x 64–124、y 16–42，和三道杠、预览集胶囊、计数圆环同一行；深色模式算出的颜色是 rgb(242,242,240)，全屏是 rgba(255,255,255,0.72)。
 
 **同日：信息卡底部改成“序号 / 总幅数”**：原来写“同系列 14 幅 · 向下拖动查看全部”，现在是“3 / 14 · 向下拖动查看全部”：3 是当前作品在本系列里按默认顺序（时间轴先后）的序号，14 是系列总幅数；未分类作品按未分类那一组算。系列成员表本来就按时间轴下标升序存着，序号直接二分查找（`sortedIndexOf`），不额外每帧扫描。数字用等宽字（`.info-pos`，`tabular-nums`），翻动时宽度不跳。悬停 / 读屏给完整说法（`info.seriesPos`：中文“系列中第 3 幅，共 14 幅”，12 种语言都改了，原来的 `info.sameSeries` 删除）。浏览器实测 12 幅、3 个系列：三个系列的序号分别是 1–5、1–4、1–3，按时间轴顺序递增。
+
+
+### 第二十一轮修改（2026-11-18）：自动更新
+
+用户问自动更新方不方便、有没有必要，听完分析（要自己保管签名私钥、发版多两步、国内连 GitHub 不稳定）后选了“直接做完整更新”，没有先做只提醒不安装的版本。
+
+**用户看到的**
+- 启动 5 秒后（`AUTO_CHECK_DELAY`，避开读作品库、生成缩略图的高峰），之后每 12 小时，去 GitHub 读 `releases/latest/download/latest.json`。没网、连不上、404 时**静默**，不打扰。
+- 有新版本：≡ 按钮右上角一个 7px 蓝点（和计数圆环同一个蓝 `color-counter`，外圈 2px 底色描边），读屏名字变成“菜单（有新版本）”；菜单最上面多一行「⤓ 更新到 0.1.4 ●」（下面一条分隔线）；第一次发现这个版本时底部提示条「Peekit 0.1.4 已发布 [更新]」，**每个版本只弹一次**（`peekit:update-announced`），蓝点和那一行一直在。
+- 点「更新」：下载进度在提示条（“正在下载更新… 45%”，常驻）和菜单那一行（文字 + 底部 2px 进度细线）；下载完先把作品库写盘，再交给安装程序。安装程序是 passive 模式（只有进度条，按当前用户安装，不弹管理员确认），会关掉 Peekit、装完自动重新打开。失败时提示条「更新失败：原因 [重试]」，菜单那一行变成“更新失败，点击重试”（悬停看原因）。
+- 「关于」里多一行：灰字状态 + 蓝色文字按钮——“检查更新” / “正在检查更新…” / “已是最新版本 · 检查更新” / “有新版本 0.1.4 · 更新” / “检查更新失败 · 重试”。手动检查失败会显示出来，自动检查不会。
+- 偏好设置新增「更新」一组：「自动检查更新」（默认开；悬停说明：启动时向 GitHub 查询，有的话在菜单里提示，不会自动下载）。关掉后不再自动查，但「关于」里还能手动查；重新打开时马上查一次。
+- 12 种语言都加了文案（19 条）。
+
+**实现**
+- `src/updater.ts`：状态机 `Updater`（idle / checking / latest / available / downloading / installing / failed），Tauri 调用从外面传进来（`UpdaterDeps`），方便单测。已经发现新版本后自动检查不再请求；进度事件只在百分比变了时通知界面（不知道总大小时每 256KB）。`install(dryRun)`：自测时只下载验签不安装。
+- `src/view/update-labels.ts`：菜单那一行、「关于」那一行的文字（纯函数，单测不加载 DOM）。`menu.ts` 的 `setUpdate` 原地更新那一行（菜单开着时下载进度也会动），`about.ts` 的 `setUpdate`。
+- 作品库立刻写盘：`LibraryStore.flush()` / `LibraryService.flush()`（store 平时 100ms 防抖自动保存，安装程序会直接关掉应用，等不到）。
+- Rust：`tauri-plugin-updater`（`default-features = false, features = ["native-tls", "system-proxy"]`）。用系统 TLS（Windows 的 schannel）代替插件默认的 rustls，安装包少约 0.6 MB；保留系统代理（国内开着 Clash 之类时能连上）；Windows 的 exe / msi 更新包用不到 zip。权限 `updater:default`；地址和公钥写死在 `tauri.conf.json`，前端改不了。另加 `restart_app`（Windows 用不到，留给以后的 macOS）、`update_probe`（自测开关）。
+- 安装包大小（0.1.3 代码）：NSIS 1.97 → 2.18 MiB，MSI 2.64 → 2.91 MiB。第一次用默认的 rustls 时是 2.63 / 3.44 MiB。
+
+**签名和发版**
+- 签名密钥对是 2026-11-18 生成的（minisign，没有密码），私钥在用户目录的 `~/.tauri/peekit-updater.key`，**不在仓库里**（`.gitignore` 也加了 `*.key`）。公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey`。**私钥丢了，已经装上的版本就再也收不到更新**，要备份。
+- 发版：`npm run release`（`scripts/release.mjs`）读私钥 → `tauri build --config src-tauri/tauri.updater.conf.json`（只打开 `createUpdaterArtifacts`，平时 `npm run tauri build` 不需要私钥）→ 生成 `bundle/latest.json`（版本号、发布时间、`windows-x86_64` / `-nsis` 指向 exe，`-msi` 指向 msi，各带签名）。把 exe、msi、latest.json 三个传到 Release 并设为 Latest。`--notes 文件` 可以写更新说明，`--base-url` 本地测试用，`--skip-build` 只重新生成 latest.json。
+- 第一个带自动更新的版本（0.1.4）只能手动下载安装；之后的版本才会自动推给用户。
+
+**实测**（编一个假装是 0.1.2、更新地址指向本地 `http://127.0.0.1:8787` 的发行版，本地起一个静态服务器提供签名过的 0.1.3 安装包和 latest.json；`PEEKIT_UPDATE_PROBE=check / download / install` 让应用自己跑一遍并把每一步打到终端，前缀“[更新自测]”）：
+- 正常：发现 0.1.3 → 下载 2,288,594 字节（25% 一档打日志）→ 签名校验通过，没有安装。
+- 签名被换成另一个文件的：下载完报 “The signature verification failed”，没有安装。
+- 服务器上没有 latest.json（404）：手动检查显示“检查更新失败”（“Could not fetch a valid release JSON from the remote”）。
+- 安装：第一次自测时有个 bug——自测下载完把状态改回“可以更新”时 `manual` 记成了 false，又弹了“有新版本”的提示条，有人点了「更新」，于是真的下载、跑了安装程序：已安装的 Peekit（`%LOCALAPPDATA%\Peekit`）在 17:05:13 被替换成了这次签名过的 0.1.3 测试包。说明安装这一步能走通（而且没有被 MSIX 重定向，装的是真实目录）。bug 已修（`restingState` 一律记成 manual，单测补上）。装完有没有自动重新打开没看到，要用户确认。
+- 从 Claude 里启动的进程写 `%LOCALAPPDATA%` 会被 MSIX 重定向（见工具坑第 8 条），所以“安装”这一步原本打算留给用户在自己的终端里测。
+- 自测脚本踩的坑：PowerShell 5.1 把没有 BOM 的 .ps1 当 ANSI 读，脚本里的中文正则全乱码，永远匹配不上；改成纯 ASCII + `\uXXXX`。

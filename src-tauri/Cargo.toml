@@ -29,6 +29,8 @@ webp = "0.3"
 walkdir = "2"
 rayon = "1"
 tauri-plugin-opener = "2"
+# 自动更新：用系统 TLS（Windows 是 schannel）代替自带的 rustls，安装包小约 0.6 MB；保留系统代理；Windows 的 exe / msi 更新包用不到 zip
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy"] }
 
 # 安装包要小：发布版按体积优化
 [profile.release]

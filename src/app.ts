@@ -26,6 +26,10 @@ import { Magnifier } from './view/magnifier';
 import { DropOverlay, EmptyState, Toast } from './view/overlays';
 import { ContextMenu, type CtxItem } from './view/context-menu';
 import { AboutDialog, REPO_URL } from './view/about';
+import {
+  AUTO_CHECK_DELAY, AUTO_CHECK_EVERY, Updater, announcedVersion, markAnnounced, percentOf, shouldAnnounce, type UpdateState,
+} from './updater';
+import { onPrefsChange, prefs } from './prefs';
 import { ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_TRASH } from './view/dom';
 import { ColorPicker } from './view/series-color';
 import { RenamePopover } from './view/series-rename';
@@ -36,7 +40,7 @@ import { nameFromSources } from './data/sets';
 import { GIF_ANIM_BUDGET, gifCandidates, gifMayAnimate, imageKind } from './data/formats';
 import {
   appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeDisplay, makeThumbnail, onFileDrop, openExternal,
-  pickFiles, pickFolders, revealInFolder, saveImageAs, setWindowFullscreen,
+  pickFiles, pickFolders, revealInFolder, saveImageAs, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
 } from './data/tauri-io';
 import { ThumbLoader } from './data/thumb-loader';
 import { PaletteLoader } from './data/palette-loader';
@@ -122,6 +126,8 @@ export class App {
   private colorPicker: ColorPicker;
   private renamePop: RenamePopover;
   private about: AboutDialog;
+  /** 自动更新（2026-11-18） */
+  private updater: Updater;
   /** 编辑卡打开时的快照：点外面 / Esc 放弃修改时恢复 */
   private editSnapshot: EditSnapshot | null = null;
   /** 编辑卡里和打开时比有没有改动（每次修改后算一次，不在每帧算） */
@@ -227,6 +233,7 @@ export class App {
       refresh: () => void this.refresh(),
       contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
       about: () => void this.about.open(),
+      installUpdate: () => void this.updater.install(),
     });
     this.ctxMenu = new ContextMenu();
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
@@ -240,6 +247,8 @@ export class App {
     this.about = new AboutDialog({
       version: appVersion,
       openRepo: () => void openExternal(REPO_URL).catch((err) => this.toast.show(t('toast.actionFailed', { msg: String(err) }))),
+      checkUpdate: () => void this.updater.check(true),
+      installUpdate: () => void this.updater.install(),
     });
     this.switcher = new SetSwitcher({
       sets: this.setInfos,
@@ -258,6 +267,13 @@ export class App {
     });
     this.drop = new DropOverlay();
     this.toast = new Toast();
+    // 自动更新：安装程序会直接关掉应用，交给它之前先把作品库写盘
+    this.updater = new Updater(updaterDeps(async () => {
+      this.flushSave();
+      await this.service.flush();
+    }));
+    this.updater.subscribe(this.onUpdate);
+    this.scheduleUpdateChecks();
     // 全屏缩放时底部的倍率（2026-11-18）
     this.zoomBadge = el('div', { class: 'zoom-badge', 'aria-hidden': 'true' });
     this.zoomBadgeText = new Styled(this.zoomBadge);
@@ -816,6 +832,71 @@ export class App {
       this.persist();
     }, 800);
   }
+
+  // ───────────── 自动更新 ─────────────
+
+  /** 启动 5 秒后查一次，之后每 12 小时；偏好设置里关掉就不查，重新打开时马上查一次 */
+  private scheduleUpdateChecks(): void {
+    if (!this.service.desktop) return;
+    // 发版前自测：设了 PEEKIT_UPDATE_PROBE 就不走自动检查，改跑一遍自测
+    void updateProbeMode().then((mode) => {
+      if (mode) void this.runUpdateProbe(mode);
+      else window.setTimeout(auto, AUTO_CHECK_DELAY);
+    });
+    const auto = () => {
+      if (prefs().autoUpdate) void this.updater.check();
+    };
+    window.setInterval(auto, AUTO_CHECK_EVERY);
+    let was = prefs().autoUpdate;
+    onPrefsChange((p) => {
+      if (p.autoUpdate && !was) auto();
+      was = p.autoUpdate;
+    });
+  }
+
+  /**
+   * 更新自测（环境变量 PEEKIT_UPDATE_PROBE）：check 只检查；download 再下载、验签（不安装）；install 下载后直接安装。
+   * 每一步打到终端，前缀“[更新自测]”。用法见 HANDOFF §12 自动更新一节。
+   */
+  private async runUpdateProbe(mode: string): Promise<void> {
+    const log = (m: string) => logInfo(`[更新自测] ${m}`);
+    log(`模式 ${mode}`);
+    const off = this.updater.subscribe((s) => {
+      if (s.kind === 'downloading') {
+        const p = percentOf(s.got, s.total);
+        if (p === null || p % 25 === 0) log(`下载中 ${s.got} / ${s.total ?? '?'} 字节`);
+      } else {
+        log(JSON.stringify(s));
+      }
+    });
+    await this.updater.check(true);
+    const s = this.updater.state;
+    if (s.kind === 'available' && mode !== 'check') {
+      await this.updater.install(mode !== 'install');
+      if (this.updater.state.kind === 'available') log('下载完成，签名校验通过（没有安装）');
+    }
+    log('结束');
+    off();
+  }
+
+  /** 更新状态变了：菜单蓝点 / 更新那一行、“关于”里的状态；下载进度和失败放在底部提示条 */
+  private onUpdate = (s: UpdateState): void => {
+    this.menu.setUpdate(s);
+    this.about.setUpdate(s);
+    const install = () => void this.updater.install();
+    if (shouldAnnounce(s, announcedVersion()) && s.kind === 'available') {
+      // 每个版本只弹一次；之后 ≡ 按钮上的蓝点和菜单顶上那一行一直在
+      markAnnounced(s.version);
+      this.toast.show(t('update.toast', { version: s.version }), { action: { label: t('update.now'), run: install } });
+    } else if (s.kind === 'downloading') {
+      const p = percentOf(s.got, s.total);
+      this.toast.show(p === null ? t('update.downloadingPlain') : t('update.downloading', { p }), true);
+    } else if (s.kind === 'installing') {
+      this.toast.show(t('update.restarting'), true);
+    } else if (s.kind === 'failed' && s.stage === 'install') {
+      this.toast.show(t('update.failed', { msg: s.msg }), { action: { label: t('update.retry'), run: install } });
+    }
+  };
 
   /** 换预览集之前：把还没写盘的修改存进当前预览集 */
   private flushSave(): void {

@@ -37,6 +37,19 @@ fn perf_mode() -> bool {
     std::env::var("PEEKIT_PERF").map(|v| v == "1").unwrap_or(false)
 }
 
+/// 更新自测（发版前用）：PEEKIT_UPDATE_PROBE=check 只检查；=download 检查并下载、验签，不安装；
+/// =install 下载后直接安装。结果打到终端，见前端 app.ts 的 runUpdateProbe
+#[tauri::command]
+fn update_probe() -> String {
+    std::env::var("PEEKIT_UPDATE_PROBE").unwrap_or_default()
+}
+
+/// 装完更新后重启。Windows 上用不到（安装程序会先关掉应用、装完自己重新打开），留给以后的 macOS 版
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -46,6 +59,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         // 关于对话框里打开 GitHub 仓库、右键“在资源管理器中显示”
         .plugin(tauri_plugin_opener::init())
+        // 自动更新（2026-11-18）：读 GitHub Release 上的 latest.json，安装包用 tauri.conf.json 里的公钥验签
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             ui::apply_saved_theme(app.handle());
             thumbs::prepare(app.handle());
@@ -60,7 +75,9 @@ pub fn run() {
             log_error,
             log_info,
             asset_check,
-            perf_mode
+            perf_mode,
+            update_probe,
+            restart_app
         ])
         .run(tauri::generate_context!())
         .expect("启动 Peekit 失败");

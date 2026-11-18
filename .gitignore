@@ -12,3 +12,6 @@ src-tauri/gen/
 .vscode/
 Thumbs.db
 *.log
+
+# 更新签名私钥（放在用户目录，防止误放进仓库）
+*.key

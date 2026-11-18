@@ -5,13 +5,15 @@
 //   全屏时滚轮始终是缩放画面，不受这一项影响
 // - wheelFullscreen：滚轮能不能进入 / 退出全屏（默认能：放大时继续上滑进全屏，全屏适应屏幕时继续下滑退出）。
 //   滚轮切换照片时这一项不起作用（菜单里显示成关、变灰），关掉切换照片后恢复成原来设的值——所以单独存，不去改它
+// - autoUpdate（2026-11-18 加）：启动时自动检查更新（默认开；只查不下载，见 updater.ts）
 
 export interface Prefs {
   wheelFlip: boolean;
   wheelFullscreen: boolean;
+  autoUpdate: boolean;
 }
 
-export const DEFAULT_PREFS: Prefs = { wheelFlip: false, wheelFullscreen: true };
+export const DEFAULT_PREFS: Prefs = { wheelFlip: false, wheelFullscreen: true, autoUpdate: true };
 
 const KEY = 'peekit:prefs';
 const listeners = new Set<(p: Prefs) => void>();
@@ -23,6 +25,7 @@ export function parsePrefs(raw: unknown): Prefs {
     const o = raw as Record<string, unknown>;
     if (typeof o.wheelFlip === 'boolean') p.wheelFlip = o.wheelFlip;
     if (typeof o.wheelFullscreen === 'boolean') p.wheelFullscreen = o.wheelFullscreen;
+    if (typeof o.autoUpdate === 'boolean') p.autoUpdate = o.autoUpdate;
   }
   return p;
 }
@@ -56,4 +59,4 @@ export function onPrefsChange(fn: (p: Prefs) => void): void {
 }
 
 /** 滚轮实际能不能进入 / 退出全屏：滚轮切换照片时不能（不管 wheelFullscreen 存的是什么） */
-export const wheelCanToggleFullscreen = (p: Readonly<Prefs>): boolean => !p.wheelFlip && p.wheelFullscreen;
+export const wheelCanToggleFullscreen = (p: Pick<Prefs, 'wheelFlip' | 'wheelFullscreen'>): boolean => !p.wheelFlip && p.wheelFullscreen;

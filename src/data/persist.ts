@@ -20,6 +20,8 @@ export interface StoredData {
 export interface LibraryStore {
   load(): Promise<StoredData>;
   save(data: SavedSets): void;
+  /** 马上写盘（自动更新安装前：安装程序会直接关掉应用，等不到自动保存） */
+  flush(): Promise<void>;
 }
 
 class TauriLibraryStore implements LibraryStore {
@@ -37,10 +39,18 @@ class TauriLibraryStore implements LibraryStore {
     return { sets: await st.get(SETS_KEY), legacy: await st.get(LEGACY_KEY) };
   }
 
+  /** 最近一次 set 的进度：flush 要等它写进 store 再落盘 */
+  private pending: Promise<void> = Promise.resolve();
+
   save(data: SavedSets): void {
-    void this.open()
+    this.pending = this.open()
       .then((st) => st.set(SETS_KEY, data))
       .catch((err) => console.error('保存预览集失败', err));
+  }
+
+  async flush(): Promise<void> {
+    await this.pending;
+    if (this.store) await (await this.store).save();
   }
 }
 
@@ -63,6 +73,10 @@ class LocalLibraryStore implements LibraryStore {
     } catch {
       /* 隐私模式等情况下存不了，忽略 */
     }
+  }
+
+  async flush(): Promise<void> {
+    /* localStorage 是同步写的 */
   }
 }
 

@@ -4,11 +4,14 @@
 //   [图标]  Peekit 0.1.0 x64
 //           by igous36
 //           基于 GPL-3.0 开源
+//           已是最新版本 · 检查更新        ← 2026-11-18 自动更新：状态 + 一个文字按钮（检查 / 更新 / 重试）
 //                       [访问 GitHub 仓库]  [关闭]
 //
 // 模态：半透明遮罩盖住应用，Tab 只在对话框里转，Esc / 点遮罩 / 关闭按钮关掉，焦点回到打开前的位置。
 import iconUrl from '../../src-tauri/icons/128x128.png';
 import { t } from '../i18n';
+import type { UpdateState } from '../updater';
+import { aboutUpdateLine } from './update-labels';
 import { el, svgIcon } from './dom';
 
 export const REPO_URL = 'https://github.com/igous36/Peekit';
@@ -27,12 +30,20 @@ export function archLabel(ua: string = navigator.userAgent): string {
 export interface AboutHandlers {
   version: () => Promise<string>;
   openRepo: () => void;
+  /** 手动检查更新 */
+  checkUpdate: () => void;
+  /** 下载并安装新版本 */
+  installUpdate: () => void;
 }
+
 
 export class AboutDialog {
   readonly root: HTMLElement;
   private dialog: HTMLElement;
   private versionEl: HTMLElement;
+  private updateStatus: HTMLElement;
+  private updateBtn: HTMLButtonElement;
+  private update: UpdateState = { kind: 'idle' };
   private returnFocus: HTMLElement | null = null;
   private closeTimer = 0;
 
@@ -42,6 +53,13 @@ export class AboutDialog {
     ]);
     close.addEventListener('click', () => this.close());
     this.versionEl = el('p', { class: 'about-name' }, ['Peekit']);
+    this.updateStatus = el('span', { class: 'about-update-status', role: 'status', 'aria-live': 'polite' });
+    this.updateBtn = el('button', { type: 'button', class: 'about-link' });
+    this.updateBtn.addEventListener('click', () => {
+      const a = aboutUpdateLine(this.update).action;
+      if (a === 'check') this.handlers.checkUpdate();
+      else if (a === 'install') this.handlers.installUpdate();
+    });
     const github = el('button', { type: 'button', class: 'about-btn' }, [
       el('span', { 'data-i18n': 'about.github' }),
       svgIcon(ICON_GITHUB_ARROW, 14),
@@ -61,6 +79,7 @@ export class AboutDialog {
           this.versionEl,
           el('p', { class: 'about-by' }, [t('about.by', { author: AUTHOR })]),
           el('p', { class: 'about-license', 'data-i18n': 'about.license' }),
+          el('p', { class: 'about-update' }, [this.updateStatus, this.updateBtn]),
         ]),
       ]),
       el('div', { class: 'about-actions' }, [github, ok]),
@@ -71,6 +90,18 @@ export class AboutDialog {
       if (e.target === this.root) this.close();
     });
     this.root.addEventListener('keydown', (e) => this.onKey(e));
+  }
+
+  /** 自动更新的状态变了（app 订阅 Updater 后传进来）；语言切换后打开时也会重画 */
+  setUpdate(s: UpdateState): void {
+    this.update = s;
+    const line = aboutUpdateLine(s);
+    this.updateStatus.textContent = line.status;
+    this.updateStatus.title = s.kind === 'failed' ? s.msg : '';
+    // 按钮消失前如果有焦点，挪到“关闭”上，免得焦点掉到 body
+    if (!line.action && document.activeElement === this.updateBtn) { const f = this.focusables(); f[f.length - 1]?.focus({ preventScroll: true }); }
+    this.updateBtn.hidden = !line.action;
+    this.updateBtn.textContent = line.label;
   }
 
   get isOpen(): boolean {
@@ -84,6 +115,7 @@ export class AboutDialog {
     void this.root.offsetWidth;
     this.root.classList.add('is-open');
     this.focusables()[this.focusables().length - 1]?.focus({ preventScroll: true });
+    this.setUpdate(this.update);
     const v = await this.handlers.version().catch(() => '');
     const arch = archLabel();
     this.versionEl.textContent = ['Peekit', v, arch].filter(Boolean).join(' ');
@@ -100,7 +132,7 @@ export class AboutDialog {
   }
 
   private focusables(): HTMLElement[] {
-    return [...this.dialog.querySelectorAll<HTMLElement>('button')];
+    return [...this.dialog.querySelectorAll<HTMLElement>('button')].filter((b) => !b.hidden);
   }
 
   private onKey(e: KeyboardEvent): void {
