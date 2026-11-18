@@ -20,7 +20,7 @@ describe('系列颜色换算（2026-11-17 新增）', () => {
     expect(hslToHex({ h: 360, s: 100, l: 50 })).toBe('#FF0000');
   });
 
-  it('常用色都是低饱和的，前 4 个就是新建系列时轮流用的颜色', () => {
+  it('预设色都是低饱和的，前 4 个就是新建系列时轮流用的颜色', () => {
     expect(seriesPresets.slice(0, 4).map((p) => p.hex)).toEqual([...seriesPalette]);
     for (const { hex } of seriesPresets) expect(hexToHsl(hex).s).toBeLessThanOrEqual(50);
     expect(new Set(seriesPresets.map((p) => p.hex)).size).toBe(seriesPresets.length);

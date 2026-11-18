@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
-  loadSets, parseSets, currentSet, createSet, renameSet, deleteSet, setCurrent, uniqueSetName, nameFromSources,
+  loadSets, parseSets, currentSet, createSet, renameSet, deleteSet, duplicateSet, setCurrent, uniqueSetName, nameFromSources,
   SET_NAME_MAX, SETS_VERSION,
 } from './sets';
 import { emptySaved, addSources } from './library';
@@ -108,5 +108,25 @@ describe('预览集：新建、改名、切换、删除', () => {
     expect(nameFromSources(['D:\\Pictures\\旅行速写\\'], 'folder')).toBe('旅行速写');
     expect(nameFromSources(['D:\\a', 'D:\\b'], 'folder')).toBeUndefined();
     expect(nameFromSources(['D:\\x.png'], 'file')).toBeUndefined();
+  });
+});
+
+describe('复制预览集（2026-11-18）', () => {
+  it('作品、来源原样复制一份（深拷贝），名字加「副本」，放在原来那个后面，不切换', () => {
+    const s = loadSets(null, null, ids);
+    addSources(s.sets[0].library, [{ path: 'D:\Art', kind: 'folder' }]);
+    s.sets[0].count = 12;
+    createSet(s, '别的', ids);
+    const copy = duplicateSet(s, s.sets[0].id, ids)!;
+    expect(s.sets.map((x) => x.name)).toEqual(['我的作品', '我的作品 副本', '别的']);
+    expect(copy.count).toBe(12);
+    expect(copy.library.sources).toEqual(s.sets[0].library.sources);
+    expect(copy.library).not.toBe(s.sets[0].library);
+    copy.library.sources.push({ path: 'E:\X', kind: 'folder' });
+    expect(s.sets[0].library.sources.length).toBe(1);
+    expect(s.current).toBe(s.sets[0].id);
+    // 再复制一次：重名加序号
+    expect(duplicateSet(s, s.sets[0].id, ids)!.name).toBe('我的作品 副本 2');
+    expect(duplicateSet(s, 'nope', ids)).toBeNull();
   });
 });

@@ -1,5 +1,9 @@
 // 底部时间轴胶囊：前后按钮、刻度、年份 / 月份、黄色指示条。
-// 刻度只在作品列表变化时重建；每帧只改刻度的高度 / 颜色（有缓存）和指示条。
+// 刻度只在作品列表变化（或轨道宽度变得需要换刻度数）时重建；刻度的高度 / 颜色只在当前作品或它的系列变化时更新；
+// 每帧只改指示条。
+//
+// 2026-11-17 针对几万幅的作品库：刻度数按轨道宽度封顶（engine/ticks.ts），作品多时一根刻度代表一段作品；
+// 年份标签也会让位，不再叠在一起。
 //
 // 2026-11-17 新增：
 // - 黄色指示条可以直接拖动（也是一个滑块，可用 ← → Home End PageUp PageDown 调）
@@ -11,6 +15,7 @@ import { lang, t } from '../i18n';
 import { r3 } from '../engine/math';
 import { indicator } from '../engine/mapping';
 import { placeLabels, timelineLabels, type TimelineLabel } from '../engine/months';
+import { bucketOf, bucketStart, tickCount, tickPosition } from '../engine/ticks';
 import { el, svgIcon, ICON_PREV, ICON_NEXT, Styled } from './dom';
 
 export interface TimelineFrame {
@@ -20,6 +25,12 @@ export interface TimelineFrame {
   vel: number;
   /** 标题或语言变了就加一，刻度的读屏标签跟着刷新 */
   labelsVersion: number;
+  /** 当前作品所在系列的全部作品下标（含当前）；数组换了才重新标刻度 */
+  members: readonly number[];
+  /**
+   * 同系列刻度的高亮色（2026-11-18）：当前作品所在系列的主题色；未归类传 null，用原来的灰色（--color-tick-series）
+   */
+  seriesColor: string | null;
 }
 
 export interface TimelineHandlers {
@@ -54,6 +65,14 @@ export class Timeline {
   private builtFor: readonly Work[] | null = null;
   private labelled = -1;
   private n = 0;
+  /** 刻度根数：等于 n 时一幅一根，小于 n 时分段 */
+  private m = 0;
+  /** 上次标刻度时的当前段和系列成员（变了才重新标） */
+  private markedCur = -1;
+  private markedMembers: readonly number[] | null = null;
+  /** 上次标同系列刻度用的颜色（undefined = 还没标过） */
+  private markedColor: string | null | undefined = undefined;
+  private last: TimelineFrame | null = null;
 
   private scrub: { id: number; offset: number } | null = null;
 
@@ -99,8 +118,14 @@ export class Timeline {
     bar.addEventListener('pointerup', this.onBarUp);
     bar.addEventListener('pointercancel', this.onBarUp);
     bar.addEventListener('keydown', this.onBarKey);
-    // 轨道宽度变了（窗口缩放）就重新决定哪些月份标签放得下
-    new ResizeObserver(() => this.layoutLabels()).observe(this.track);
+    // 轨道宽度变了（窗口缩放）：重新决定哪些月份 / 年份标签放得下；刻度根数要变就重建刻度
+    new ResizeObserver(() => {
+      this.layoutLabels();
+      if (this.builtFor && tickCount(this.n, this.track.clientWidth) !== this.m) {
+        this.builtFor = null;
+        if (this.last) this.render(this.last);
+      }
+    }).observe(this.track);
   }
 
   // ───────────── 指示条拖动 ─────────────
@@ -160,24 +185,78 @@ export class Timeline {
 
   // ───────────── 刻度和标签 ─────────────
 
-  /** 作品列表（或顺序、日期）变了才调用 */
+  /**
+   * 作品列表（或顺序、日期）变了、或轨道宽度变得要换刻度根数时调用。
+   * 刻度数 m = min(作品数, 轨道宽 / 5px)：作品少时一幅一根，多了一根刻度代表一段连续的作品
+   */
   private build(works: readonly Work[]): void {
     this.builtFor = works;
     this.labelled = -1;
+    this.markedCur = -1;
+    this.markedMembers = null;
     this.ticks = [];
-    this.n = works.length;
-    const n = works.length;
+    const n = (this.n = works.length);
+    const trackPx = this.track.clientWidth;
+    const m = (this.m = tickCount(n, trackPx));
+    // 刻度按钮的点击区：刻度稀的时候 28px，密的时候缩到刻度间距，免得互相盖住
+    const spacing = trackPx > 0 && m > 1 ? trackPx / (m - 1) : 28;
+    const hitW = Math.max(6, Math.min(28, Math.floor(spacing)));
     const nodes: HTMLElement[] = [];
-    works.forEach((_, i) => {
+    for (let b = 0; b < m; b++) {
       const mark = el('span', { class: 'tl-mark' });
       const btn = el('button', { type: 'button', class: 'tl-tick' }, [mark]);
-      btn.style.left = this.leftOf(i, n);
-      btn.addEventListener('click', () => this.handlers.go?.(i));
+      btn.style.left = `${r3(tickPosition(b, n, m) * 100)}%`;
+      btn.style.width = `${hitW}px`;
+      btn.style.marginLeft = `${-hitW / 2}px`;
+      // 分段时点刻度跳到这一段的第一幅
+      btn.addEventListener('click', () => this.handlers.go?.(m === n ? b : bucketStart(b, n, m)));
       nodes.push(btn);
       this.ticks.push({ btn, mark: new Styled(mark) });
-    });
+    }
     this.tickLayer.replaceChildren(...nodes);
     this.indBar.attr('aria-valuemax', String(n));
+  }
+
+  /** 刻度的读屏标签：一幅一根时是那一幅；分段时是这一段的日期范围和幅数 */
+  private labelTicks(works: readonly Work[]): void {
+    const n = this.n, m = this.m;
+    const date = (w: Work | undefined) => w?.date || t('date.unknown');
+    this.ticks.forEach((tk, b) => {
+      if (m === n) {
+        const w = works[b];
+        tk.btn.setAttribute('aria-label', t('timeline.tick', { title: displayTitle(w), date: date(w) }));
+      } else {
+        const from = bucketStart(b, n, m), to = bucketStart(b + 1, n, m) - 1;
+        tk.btn.setAttribute(
+          'aria-label',
+          t('timeline.tickRange', { from: date(works[from]), to: date(works[to]), n: to - from + 1 }),
+        );
+      }
+    });
+  }
+
+  /**
+   * 刻度的高低和颜色：当前那一幅（所在的段）最高、同系列（含同系列作品的段）中等、其余最低。
+   * 只在当前段或系列成员变了时才改（最多几百根），不在每帧都走一遍
+   */
+  private markTicks(cur: number, members: readonly number[], color: string | null): void {
+    const n = this.n, m = this.m;
+    const curB = m === n ? cur : bucketOf(cur, n, m);
+    if (curB === this.markedCur && members === this.markedMembers && color === this.markedColor) return;
+    this.markedCur = curB;
+    this.markedMembers = members;
+    this.markedColor = color;
+    // 同系列：系列的主题色；未归类：原来的灰色（CSS 变量，切换深浅色时不用重算）
+    const seriesBg = color ?? 'var(--color-tick-series)';
+    const same = new Set<number>();
+    for (const i of members) same.add(m === n ? i : bucketOf(i, n, m));
+    for (let b = 0; b < this.ticks.length; b++) {
+      const isCur = b === curB;
+      const inSeries = same.has(b);
+      const mark = this.ticks[b].mark;
+      mark.set('height', `${isCur ? 18 : inSeries ? 12 : 8}px`);
+      mark.set('background', isCur ? 'var(--color-tick-current)' : inSeries ? seriesBg : 'var(--color-tick-other)');
+    }
   }
 
   private leftOf(i: number, n: number): string {
@@ -203,32 +282,20 @@ export class Timeline {
     if (w <= 0) return;
     const n = Math.max(1, this.n - 1);
     const xs = this.labels.map((l) => (this.n > 1 ? (l.index / n) * w : w / 2));
-    const show = placeLabels(this.labels, xs);
+    const show = placeLabels(this.labels, xs, 34, this.n);
     this.labelNodes.forEach((node, i) => node.classList.toggle('is-hidden', !show[i]));
   }
 
   render(f: TimelineFrame): void {
+    this.last = f;
     const { works, cur } = f;
     if (this.builtFor !== works) this.build(works);
     if (this.labelled !== f.labelsVersion) {
       this.labelled = f.labelsVersion;
-      works.forEach((w, i) => {
-        this.ticks[i].btn.setAttribute(
-          'aria-label',
-          t('timeline.tick', { title: displayTitle(w), date: w.date || t('date.unknown') }),
-        );
-      });
+      this.labelTicks(works);
       this.buildLabels(works);
     }
-    const curSeries = works[cur]?.series;
-    for (let i = 0; i < this.ticks.length; i++) {
-      const isCur = i === cur;
-      const same = works[i].series === curSeries;
-      const m = this.ticks[i].mark;
-      m.set('height', `${isCur ? 18 : same ? 12 : 8}px`);
-      // 用 CSS 变量而不是具体颜色：切换深浅色时不用等下一帧重算
-      m.set('background', isCur ? 'var(--color-tick-current)' : same ? 'var(--color-tick-series)' : 'var(--color-tick-other)');
-    }
+    if (works.length) this.markTicks(cur, f.members, f.seriesColor);
     const ind = indicator(f.pos, works.length, f.vel);
     this.indPos.set('transform', `translateX(${r3(ind.left * 100)}%)`);
     // 宽度只在速度变化时以整数 px 变化，影响范围只有这一个绝对定位元素

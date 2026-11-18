@@ -29,11 +29,21 @@ export const color = {
   // 全屏深色底上的“纯白”和“墨黑”（悬停、关闭按钮）：浅色、深色模式一样
   'color-on-dark-strong': '#FFFFFF',
   'color-on-dark-ink': '#161616',
+  // 全屏缩放时底部的倍率胶囊底色（2026-11-18）：浅色、深色模式一样
+  'color-zoom-badge': 'rgba(20,20,20,0.66)',
   // 以下原来直接写在 CSS 里，深色模式要换值，所以提成变量（2026-11-17）
   'color-drop-scrim': 'rgba(213,213,211,0.6)',
   'color-art-edge': 'rgba(255,255,255,0.35)',
   'color-thumb-edge': 'rgba(255,255,255,0.4)',
   'color-scrim': 'rgba(22,22,22,0.28)',
+  // 颜色模式拨动开关（2026-11-18，查看菜单）：白天 / 夜晚两种轨道色、太阳旋钮、月牙
+  'color-switch-day': '#ECEAE4',
+  'color-switch-night': '#2E2F33',
+  'color-switch-sun': '#E2B667',
+  'color-switch-moon': '#EEEAE0',
+  // 左上角计数圆环（2026-11-18）：内圈的蓝色进度环、它下面的灰圈
+  'color-counter': '#3D8BFF',
+  'color-counter-track': 'rgba(0,0,0,0.13)',
 } as const;
 
 export type ColorToken = keyof typeof color;
@@ -66,17 +76,24 @@ export const colorDark: Record<ColorToken, string> = {
   'color-window-btn-hover-dark': 'rgba(255,255,255,0.14)',
   'color-on-dark-strong': '#FFFFFF',
   'color-on-dark-ink': '#161616',
+  'color-zoom-badge': 'rgba(20,20,20,0.66)',
   'color-drop-scrim': 'rgba(28,28,29,0.6)',
   'color-art-edge': 'rgba(255,255,255,0.08)',
   'color-thumb-edge': 'rgba(255,255,255,0.10)',
   'color-scrim': 'rgba(0,0,0,0.5)',
+  'color-switch-day': '#CFCBC3',
+  'color-switch-night': '#1A1A1C',
+  'color-switch-sun': '#E2B667',
+  'color-switch-moon': '#EEEAE0',
+  'color-counter': '#3D8BFF',
+  'color-counter-track': 'rgba(255,255,255,0.16)',
 };
 
 /** 新建系列时依次取用的系列色（只用于 8px 圆点） */
 export const seriesPalette = ['#C27F4B', '#5FA3C9', '#8E6FB0', '#C2577A'] as const;
 
 /**
- * “修改颜色”调色器里的常用色（2026-11-17 新增）：前 4 个就是上面的系列色，
+ * “修改颜色”调色器里的预设色（2026-11-17 新增）：前 4 个就是上面的系列色，
  * 其余是同一个调子的低饱和色（浓淡 ≤ 50%）。名字在 i18n 的 color.<key>。
  */
 export const seriesPresets = [
@@ -125,6 +142,24 @@ export const radius = {
   /** 左上角下拉菜单（2026-11-17 新增） */
   'radius-menu': '16px',
 } as const;
+
+/**
+ * 超椭圆圆角（2026-11-18 新增）：卡片、面板、菜单、输入框这些块面用 CSS 的 `corner-shape: superellipse(K)`，
+ * 直边到圆角的曲率连续过渡（类似苹果的连续圆角），不像普通圆角那样在直边和圆弧的接缝处突然拐弯。
+ * K = 1 就是普通圆角，2 是 squircle（偏方、偏“椭圆”）；取 1.5，比普通圆角顺滑又不过分。
+ * 玻璃格（性能）、胶囊、圆形不用。不支持 corner-shape 的环境保持原来的普通圆角（styles.css 里用 @supports）
+ */
+export const CORNER_K = 1.5;
+
+/**
+ * 同样的半径下超椭圆的角“更尖”：半径乘这个倍数，让对角线方向上角尖到曲线的距离和原来的普通圆角一样——
+ * 角看起来一样大，只是曲线从直边上更早、更缓地弯过去（K = 1.5 时约 1.35 倍）。
+ * superellipse(K) 的曲线是 |x|^n + |y|^n = 1，n = 2^K
+ */
+export function cornerScale(k: number): number {
+  const n = 2 ** k;
+  return (1 - Math.SQRT1_2) / (1 - 2 ** (-1 / n));
+}
 
 export const shadow = {
   'shadow-art-center': '0 36px 70px -12px rgba(38,30,12,0.30), 0 8px 18px rgba(0,0,0,0.13)',
@@ -178,6 +213,8 @@ export const spring = {
   reducedMotion: [300, 35],
   /** 放大查看 / 全屏（2026-11-17 新增）：临界阻尼，放大时不过冲出窗口 */
   magnify: [260, 32],
+  /** 全屏时的滚轮缩放 / 平移（2026-11-18 新增）：临界阻尼，滚一格大约 0.15s 到位（用户觉得慢，[420, 41] → [640, 51]） */
+  fsZoom: [640, 51],
 } as const;
 
 /** 舞台尺寸，单位 u = min(1vh, 0.6vw)，HANDOFF §2 */
@@ -228,6 +265,8 @@ export function tokenCss(): string {
   light['glass-border'] = glass['glass-border'];
   light['glass-highlight'] = glass['glass-highlight'];
   for (const [k, v] of Object.entries(radius)) if (typeof v === 'string') light[k] = v;
+  light['corner-shape'] = `superellipse(${CORNER_K})`;
+  light['corner-scale'] = cornerScale(CORNER_K).toFixed(4);
   const dark: Record<string, string> = { ...colorDark, ...shadowDark };
   dark['glass-fill'] = glassDark['glass-fill']();
   dark['glass-border'] = glassDark['glass-border'];

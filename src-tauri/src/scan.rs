@@ -1,4 +1,4 @@
-//! 扫描导入的文件 / 文件夹：找出 PNG / JPG / WebP，读尺寸、日期。
+//! 扫描导入的文件 / 文件夹：找出图片（PNG / JPG / WebP，2026-11-17 起加 GIF / BMP / TIFF / SVG），读尺寸、日期。
 //! 文件没变（修改时间和大小都一样）就直接用前端传回来的旧结果，启动时不必重新读每张图。
 
 use std::collections::HashMap;
@@ -11,7 +11,8 @@ use tauri::AppHandle;
 
 use crate::dates;
 
-pub const IMAGE_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+/// 和前端 data/formats.ts 的 IMAGE_EXTS 一致
+pub const IMAGE_EXTS: [&str; 9] = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg"];
 
 #[derive(Deserialize)]
 pub struct Source {
@@ -61,11 +62,17 @@ pub struct ScanResult {
     pub missing: Vec<String>,
 }
 
+fn ext_of(p: &Path) -> Option<String> {
+    p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
+}
+
 pub fn is_image(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+    ext_of(p).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str()))
+}
+
+/// SVG：不经过 image 解码，界面直接显示矢量原图
+pub fn is_svg(p: &Path) -> bool {
+    ext_of(p).is_some_and(|e| e == "svg")
 }
 
 fn is_hidden(name: &str) -> bool {
@@ -157,8 +164,19 @@ fn read_item(found: &Found, known: Option<&Known>) -> Option<ScanItem> {
         }
     }
 
-    // 只读文件头拿尺寸，不解码整张图
+    // SVG：从根标签读尺寸（读不到给 0，前端按默认比例摆）；没有 EXIF，日期只可能来自 XMP 元数据
+    if is_svg(path) {
+        let (w, h) = crate::svg::svg_size(path).unwrap_or((0, 0));
+        let (date, ts) = match dates::read_xmp_date(path) {
+            Some(d) => (Some(d.display), d.ts),
+            None => (None, mtime),
+        };
+        return Some(base(date, ts, w, h));
+    }
+
+    // 只读文件头拿尺寸，不解码整张图（GIF / BMP / TIFF 也一样）
     let (mut w, mut h) = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.into_dimensions().ok()?;
+    // EXIF：JPEG / PNG / WebP / TIFF 有；GIF / BMP 没有，读不到就用 XMP 或修改时间
     let exif = dates::read_exif(path);
     if (5..=8).contains(&exif.orientation) {
         std::mem::swap(&mut w, &mut h);
@@ -218,6 +236,10 @@ mod tests {
         assert!(is_image(Path::new("a/b/C.PNG")));
         assert!(is_image(Path::new("x.jpeg")));
         assert!(is_image(Path::new("x.webp")));
+        for e in ["a.gif", "a.BMP", "a.tif", "a.TIFF", "a.svg"] {
+            assert!(is_image(Path::new(e)), "{e}");
+        }
+        assert!(is_svg(Path::new("x.SVG")) && !is_svg(Path::new("x.png")));
         assert!(!is_image(Path::new("x.psd")));
         assert!(!is_image(Path::new("noext")));
     }

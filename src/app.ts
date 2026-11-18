@@ -6,7 +6,8 @@ import {
   currentOf, rowFade, headerOpacity, needsOriginalFor, paintingAt, artSize, cameraScale, thumbCaps, thumbPage,
   type ThumbCaps, type ThumbPage,
 } from './engine/mapping';
-import { cardRect } from './engine/magnify';
+import { cardRect, magnifyTargets } from './engine/magnify';
+import { BADGE_HIDE_MS, zoomPercent } from './engine/fszoom';
 import { monthJump } from './engine/months';
 import { cameraLevel, stageUnit } from './engine/gesture';
 import { clamp } from './engine/math';
@@ -32,14 +33,16 @@ import { installFocusOrder } from './view/focus-order';
 import type { LibraryService } from './data/service';
 import type { Source } from './data/library';
 import { nameFromSources } from './data/sets';
+import { GIF_ANIM_BUDGET, gifCandidates, gifMayAnimate, imageKind } from './data/formats';
 import {
-  appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeThumbnail, onFileDrop, openExternal,
+  appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeDisplay, makeThumbnail, onFileDrop, openExternal,
   pickFiles, pickFolders, revealInFolder, saveImageAs, setWindowFullscreen,
 } from './data/tauri-io';
 import { ThumbLoader } from './data/thumb-loader';
+import { PaletteLoader } from './data/palette-loader';
 import {
   assignWork, createSeries, deleteSeries, displayName, displayTitle, finalizeNames, removeWorks, renameSeries,
-  setCustomTitle, visibleSeries, UNSORTED_ID,
+  setCustomTitle, UNSORTED_ID, snapshotEdit, restoreEdit, editChanged, type EditSnapshot,
 } from './data/series-ops';
 
 export interface UiState extends UiFlags {
@@ -69,11 +72,7 @@ const needsOriginal = (w: Work, magnified: boolean): boolean =>
 
 const aspectOf = (w: Work): number | undefined => (w.width && w.height ? w.width / w.height : undefined);
 
-/** 编辑卡打开时的系列列表和每幅作品的归属 / 自定义标题 */
-interface EditSnapshot {
-  series: Series[];
-  works: Map<string, { series: string; customTitle?: string }>;
-}
+const NO_MEMBERS: readonly number[] = [];
 
 /** 右键删除前的作品库状态（撤销用） */
 interface UndoSnapshot {
@@ -96,8 +95,13 @@ export class App {
   private service: LibraryService;
   private loadLibrary: () => Promise<Library>;
   private seriesById = new Map<string, Series>();
+  private members = new Map<string, number[]>();
+  private membersFor: readonly Work[] | null = null;
+  private membersDirty = true;
   private stage: StageView;
   private hud: Hud;
+  /** 当前作品的主题色（左上角计数圆环的外圈，2026-11-18） */
+  private palette: PaletteLoader;
   private info: InfoPanel;
   private timeline: Timeline;
   private menu: AppMenu;
@@ -109,12 +113,19 @@ export class App {
   private toast: Toast;
   private infoFade: Styled;
   private timelineFade: Styled;
+  private zoomBadge: HTMLElement;
+  private zoomBadgeText: Styled;
+  private zoomBadgeTimer = 0;
+  /** 全屏时上一帧的当前作品：换了作品，缩放回到适应屏幕 */
+  private fsCur = -1;
   private ctxMenu: ContextMenu;
   private colorPicker: ColorPicker;
   private renamePop: RenamePopover;
   private about: AboutDialog;
   /** 编辑卡打开时的快照：点外面 / Esc 放弃修改时恢复 */
   private editSnapshot: EditSnapshot | null = null;
+  /** 编辑卡里和打开时比有没有改动（每次修改后算一次，不在每帧算） */
+  private editDirty = false;
   /** 最近一次右键删除的快照：提示条里“撤销”用；作品库被换掉（导入、切换预览集）后作废 */
   private undo: UndoSnapshot | null = null;
   private thumbs: ThumbLoader | null = null;
@@ -130,12 +141,16 @@ export class App {
   private hiResTimer = 0;
   private loaderCur = -1;
   private loaderWorks: readonly Work[] | null = null;
+  private loaderPage: readonly number[] | null = null;
+  /** 动图地址的解码状态（GIF 在旁边也动） */
+  private animState = new Map<string, 'loading' | 'ready' | 'failed'>();
   // 系列视图缩略图分页：每排容量（按窗口尺寸缓存）、手动翻到的页（换了作品就回到自动）
   private caps: ThumbCaps = { top: 1, bottom: 1 };
   private capsKey = '';
   private pageSel: number | null = null;
   private pageCur = -1;
   private lastPage: ThumbPage | null = null;
+  private pageKey: { series: readonly number[]; cur: number; caps: ThumbCaps; sel: number | null } | null = null;
   private saveTimer = 0;
   private thumbRetries = new Map<string, number>();
   private reveal = { left: false, right: false };
@@ -163,7 +178,7 @@ export class App {
       },
       artError: (id, original, src) => {
         if (this.service.desktop) void diagnoseImage(src);
-        this.onArtError(id, original);
+        this.onArtError(id, original, src);
       },
       // 右键画作 / 缩略图；放大查看时右键的是放大层下面的舞台，算当前那幅
       menu: (index, x, y) => {
@@ -181,6 +196,7 @@ export class App {
         if (w) this.openSeriesMenu(w.series, x, y);
       },
     });
+    this.palette = new PaletteLoader((colors) => this.hud.counter.setPalette(colors));
     this.info = new InfoPanel({
       startEdit: this.startEdit,
       retitle: this.retitle,
@@ -207,9 +223,18 @@ export class App {
       newSet: this.newSet,
       renameSet: this.renameSet,
       deleteSet: this.deleteSet,
+      duplicateSet: this.duplicateSet,
+      refresh: () => void this.refresh(),
+      contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
       about: () => void this.about.open(),
     });
     this.ctxMenu = new ContextMenu();
+    // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'F5' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      e.preventDefault();
+      void this.refresh();
+    });
     this.colorPicker = new ColorPicker();
     this.renamePop = new RenamePopover();
     this.about = new AboutDialog({
@@ -224,6 +249,9 @@ export class App {
     });
     this.drop = new DropOverlay();
     this.toast = new Toast();
+    // 全屏缩放时底部的倍率（2026-11-18）
+    this.zoomBadge = el('div', { class: 'zoom-badge', 'aria-hidden': 'true' });
+    this.zoomBadgeText = new Styled(this.zoomBadge);
     this.winControls = new WindowControls(() => ctl.toggleFullscreen());
     this.infoFade = new Styled(this.info.root);
     this.timelineFade = new Styled(this.timeline.root);
@@ -242,6 +270,7 @@ export class App {
       this.empty.root,
       this.timeline.root,
       this.toast.root,
+      this.zoomBadge,
       this.winControls.root,
       this.drop.root,
       this.ctxMenu.root,
@@ -296,9 +325,37 @@ export class App {
     return this.lib.works.length;
   }
 
+  /** 系列列表或作品归属变了之后调用：重建 id → 系列，并让“系列 → 作品下标”下次用到时重建 */
   private indexSeries(): void {
     this.seriesById.clear();
     for (const s of this.lib.series) this.seriesById.set(s.id, s);
+    this.membersDirty = true;
+  }
+
+  /**
+   * 某个系列的全部作品下标（按时间顺序）。整张表在作品列表或归属变了之后第一次用到时重建一次（O(n)），
+   * 平时查表 O(1)。几万幅时每帧扫一遍全部作品太费（2026-11-17 压力测试后改）。
+   * 返回的数组在下次重建前不变，时间轴靠它的身份判断要不要重新标刻度。
+   */
+  private membersOf(seriesId: string): readonly number[] {
+    if (this.membersDirty || this.membersFor !== this.lib.works) {
+      const map = new Map<string, number[]>();
+      this.lib.works.forEach((w, i) => {
+        const list = map.get(w.series);
+        if (list) list.push(i);
+        else map.set(w.series, [i]);
+      });
+      this.members = map;
+      this.membersFor = this.lib.works;
+      this.membersDirty = false;
+    }
+    return this.members.get(seriesId) ?? NO_MEMBERS;
+  }
+
+  /** 有作品的系列（编辑卡的芯片；空系列隐藏，数据保留） */
+  private seriesInUse(): Series[] {
+    this.membersOf('');
+    return this.lib.series.filter((s) => this.members.has(s.id));
   }
 
   private seriesOf(w: Work): Series {
@@ -313,7 +370,34 @@ export class App {
     this.reveal = { left: false, right: false };
     this.root.classList.remove('reveal-left', 'reveal-right');
     if (on) this.toast.show(t('fullscreen.hint'));
+    else this.hideZoomBadge();
     void setWindowFullscreen(on).catch((err) => logError(`切换全屏失败: ${String(err)}`));
+  }
+
+  // ───────────── 全屏缩放（2026-11-18，Controller 调用） ─────────────
+
+  /** 当前作品适应屏幕时的大小（全屏框）、原图宽度、屏幕像素比 */
+  fsBase(): { w: number; h: number; naturalW?: number; dpr: number } {
+    const w = this.lib.works[currentOf(this.m.pos, this.lib.works.length).cur];
+    const full = magnifyTargets(w ? aspectOf(w) : undefined, window.innerWidth, window.innerHeight).full;
+    return { w: full.w, h: full.h, naturalW: w?.width, dpr: window.devicePixelRatio || 1 };
+  }
+
+  /** 已经在头 / 尾还往外翻：左上角计数跳一下（2026-11-18） */
+  edgeBump(): void {
+    this.hud.counter.bump();
+  }
+
+  /** 缩放了一下：底部显示倍率，停 1.2 秒后淡出 */
+  zoomActivity(): void {
+    window.clearTimeout(this.zoomBadgeTimer);
+    this.zoomBadge.classList.add('is-visible');
+    this.zoomBadgeTimer = window.setTimeout(() => this.hideZoomBadge(), BADGE_HIDE_MS);
+  }
+
+  private hideZoomBadge(): void {
+    window.clearTimeout(this.zoomBadgeTimer);
+    this.zoomBadge.classList.remove('is-visible');
   }
 
   /** 全屏时：鼠标到顶部左半边浮出菜单和字标，右半边浮出窗口按钮 */
@@ -485,6 +569,50 @@ export class App {
     if (this.service.renameSet(id, name)) this.updateSetChip();
   };
 
+  /** 右键预览集 → 创建副本（2026-11-18）：不切换过去，返回副本的 id */
+  private duplicateSet = (id: string): string | null => {
+    this.flushSave(); // 复制当前预览集时，把还没写盘的修改也带上
+    const s = this.service.duplicateSet(id);
+    if (s) this.toast.show(t('sets.duplicated', { name: s.name }));
+    return s?.id ?? null;
+  };
+
+  /**
+   * 刷新（查看 → 刷新 / F5，2026-11-18）：重新扫描当前预览集导入过的文件夹和文件，
+   * 新增的图片加进来、找不到的去掉、改过的重新生成缩略图；停在原来那一幅（它没了就停在附近），镜头不动
+   */
+  async refresh(): Promise<void> {
+    if (!this.service.desktop) {
+      this.toast.show(t('refresh.desktopOnly'));
+      return;
+    }
+    if (this.importing || this.loading) return;
+    this.flushSave();
+    this.importing = true;
+    this.toast.show(t('refresh.running'), true);
+    const token = ++this.loadToken;
+    try {
+      const at = this.controller.targetIndex();
+      const keep = this.lib.works[at]?.id;
+      const before = new Set(this.lib.works.map((w) => w.id));
+      const r = await this.service.rescan();
+      if (token !== this.loadToken) return;
+      const after = new Set(r.lib.works.map((w) => w.id));
+      const added = r.lib.works.filter((w) => !before.has(w.id)).length;
+      let removed = 0;
+      for (const id of before) if (!after.has(id)) removed++;
+      let focus = keep ? r.lib.works.findIndex((w) => w.id === keep) : -1;
+      if (focus < 0) focus = Math.min(at, r.lib.works.length - 1);
+      this.setLibrary(r.lib, Math.max(0, focus), true);
+      this.toast.show(added || removed ? t('refresh.done', { added, removed }) : t('refresh.none'));
+    } catch (err) {
+      this.toast.show(t('toast.actionFailed', { msg: String(err) }));
+    } finally {
+      this.importing = false;
+      this.updateSetChip();
+    }
+  }
+
   private deleteSet = (id: string): void => {
     const name = this.service.sets.find((s) => s.id === id)?.name ?? '';
     this.flushSave();
@@ -496,10 +624,11 @@ export class App {
 
   // ───────────── 图片 ─────────────
 
-  private onArtError(id: string, original: boolean): void {
+  private onArtError(id: string, original: boolean, src = ''): void {
     if (original) {
-      // 原图读不了就继续用缩略图
+      // 原图（或动图）读不了就继续用缩略图
       if (this.hiRes?.id === id) this.hiRes = null;
+      if (this.animState.has(src)) this.animState.set(src, 'failed');
       this.controller.kick();
       return;
     }
@@ -521,10 +650,23 @@ export class App {
   }
 
   /** 停留 300ms 后加载原图；放大查看时按全屏尺寸判断需不需要 */
+  /**
+   * 停留 300ms 后换成原图（2026-11-17 起按格式区分，见 data/formats.ts）：
+   * - SVG：缩略图就是矢量原图，不用换
+   * - GIF：总是换原图，让动图动起来（缩略图只是第一帧）
+   * - TIFF：界面显示不了原图，换成 Rust 端生成的显示用大图（长边 ≤ 4096，有缓存）
+   * - 其余按需要（needsOriginalFor）换原图
+   */
   private requestHiRes(w: Work | undefined): void {
     const magnified = this.controller.magnified;
-    const ok = w && w.path && !w.broken && this.hiResEnabled && needsOriginal(w, magnified);
-    const key = ok && w ? `${w.id}${magnified ? '|mag' : ''}` : null;
+    const kind = w?.path ? imageKind(w.path) : 'web';
+    // 能在旁边动的 GIF 由 pickAnimated 管（中间那幅也是，不用等 300ms）；太大的 GIF 仍在这里停留后换原图
+    const animByPool = kind === 'gif' && !!w && this.gifAllowed(w);
+    const ok =
+      w && w.path && !w.broken && this.hiResEnabled && kind !== 'svg' && !animByPool &&
+      (kind === 'gif' || needsOriginal(w, magnified) || this.controller.fsZoomed);
+    // 同一幅不管放不放大用的都是同一张原图（或显示用大图）：键只看作品，放大 / 全屏缩放时不会重新加载、闪回缩略图
+    const key = ok && w ? w.id : null;
     if (key === this.hiResFor) return;
     this.hiResFor = key;
     this.hiRes = null;
@@ -532,22 +674,88 @@ export class App {
     if (!w || !key) return;
     const id = w.id;
     this.hiResTimer = window.setTimeout(() => {
-      const url = assetUrl(w.path!);
-      const img = new Image();
-      img.decoding = 'async';
-      img.src = url;
-      img
-        .decode()
-        .then(() => {
+      void (async () => {
+        try {
+          let url = assetUrl(w.path!);
+          if (kind === 'convert') {
+            const { mtime, size } = this.service.fileInfo(id);
+            url = assetUrl(await makeDisplay(w.path!, mtime, size, false));
+            if (this.hiResFor !== key) return;
+          }
+          const img = new Image();
+          img.decoding = 'async';
+          img.src = url;
+          await img.decode();
           if (this.hiResFor === key) {
             this.hiRes = { id, url };
             this.controller.kick();
           }
-        })
-        .catch(() => {
-          /* 原图解码失败：继续用缩略图 */
-        });
+        } catch {
+          /* 原图（或显示用大图）读不了：继续用缩略图 */
+        }
+      })();
     }, HIRES_DWELL_MS);
+  }
+
+  // ───────────── GIF 在旁边也动（2026-11-17，规则见 data/formats.ts） ─────────────
+
+  /** 这幅 GIF 能不能在“不是主预览图”的位置动（文件、画面不太大） */
+  private gifAllowed(w: Work): boolean {
+    return !!w.path && !w.broken && gifMayAnimate(w.path, this.service.fileInfo(w.id).size, w.width, w.height);
+  }
+
+  /**
+   * 这一帧里哪些 GIF 用动图（作品 id → 已解码好的动图地址）。按优先级最多 GIF_ANIM_BUDGET 个；
+   * 还没解码好的先开始解码（这一帧用静态缩略图），好了再 kick 一帧换上
+   */
+  private pickAnimated(works: readonly Work[], cur: number, pageItems: readonly number[], zoom: number, mag: number): Map<string, string> {
+    const out = new Map<string, string>();
+    if (!this.service.desktop) return out;
+    // 减少动态效果：只有中间那幅动（和原来一样）
+    const order = this.controller.reduced ? [cur] : gifCandidates(cur, pageItems, zoom, mag);
+    let taken = 0;
+    for (const i of order) {
+      if (taken >= GIF_ANIM_BUDGET) break;
+      const w = works[i];
+      if (!w || !w.path || imageKind(w.path) !== 'gif' || !this.gifAllowed(w)) continue;
+      taken++;
+      const url = assetUrl(w.path);
+      const st = this.animState.get(url);
+      if (st === 'ready') out.set(w.id, url);
+      else if (!st) this.predecode(url);
+    }
+    return out;
+  }
+
+  /** 先把动图的第一帧解码好（换上时不闪）；记录最多 64 条，旧的丢掉让浏览器回收 */
+  private predecode(url: string): void {
+    this.animState.set(url, 'loading');
+    if (this.animState.size > 64) {
+      const oldest = this.animState.keys().next().value;
+      if (oldest !== undefined) this.animState.delete(oldest);
+    }
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+    img.decode().then(
+      () => {
+        this.animState.set(url, 'ready');
+        this.controller.kick();
+      },
+      () => this.animState.set(url, 'failed'),
+    );
+  }
+
+  /** 右键“复制图像”：TIFF 先在 Rust 端转成原尺寸 PNG；SVG 画成位图；其余直接读原图 */
+  private async copyWork(w: Work): Promise<void> {
+    const file = w.path!;
+    let url = assetUrl(file);
+    if (imageKind(file) === 'convert') {
+      this.toast.show(t('toast.copying'), true);
+      const { mtime, size } = this.service.fileInfo(w.id);
+      url = assetUrl(await makeDisplay(file, mtime, size, true));
+    }
+    await copyImage(url, w.width && w.height ? { w: w.width, h: w.height } : undefined);
   }
 
   // ───────────── 系列视图缩略图分页 ─────────────
@@ -616,10 +824,8 @@ export class App {
     if (!this.target()) return;
     // 记下打开前的状态：点外面 / Esc 放弃时恢复（标题、系列名、归属、新建的系列）
     if (!this.ui.editing) {
-      this.editSnapshot = {
-        series: this.lib.series.map((s) => ({ ...s })),
-        works: new Map(this.lib.works.map((w) => [w.id, { series: w.series, customTitle: w.customTitle }])),
-      };
+      this.editSnapshot = snapshotEdit(this.lib);
+      this.editDirty = false;
     }
     this.ui.editing = true;
     this.ui.touched = true;
@@ -628,34 +834,42 @@ export class App {
     this.controller.kick();
   };
 
+  /**
+   * 编辑卡里每改一下：重新判断有没有改动（“取消”按钮可不可点），稍后保存。
+   * 保存走 800ms 防抖：作品库很大时整份保存要几百毫秒，不能每打一个字就存一次；
+   * 点“完成” / 取消时会立刻保存。
+   */
+  private edited(): void {
+    if (this.editSnapshot) this.editDirty = editChanged(this.editSnapshot, this.lib);
+    this.persistSoon();
+    this.controller.kick();
+  }
+
   private retitle = (title: string): void => {
     if (!this.target()) return;
     setCustomTitle(this.lib, this.controller.targetIndex(), title);
-    this.persist();
-    this.controller.kick();
+    this.edited();
   };
 
   private rename = (name: string): void => {
     const w = this.target();
     if (!w) return;
     renameSeries(this.lib, w.series, name);
-    this.persist();
-    this.controller.kick();
+    this.edited();
   };
 
   private pick = (seriesId: string): void => {
     if (!this.target()) return;
     assignWork(this.lib, this.controller.targetIndex(), seriesId);
-    this.persist();
-    this.controller.kick();
+    this.membersDirty = true;
+    this.edited();
   };
 
   private newSeries = (): void => {
     if (!this.target()) return;
     createSeries(this.lib, this.controller.targetIndex());
     this.indexSeries();
-    this.persist();
-    this.controller.kick();
+    this.edited();
   };
 
   private finishEdit = (): void => {
@@ -663,6 +877,9 @@ export class App {
     finalizeNames(this.lib);
     this.ui.editing = false;
     this.editSnapshot = null;
+    this.editDirty = false;
+    window.clearTimeout(this.saveTimer); // 下面立刻保存，防抖的那次不用了
+    this.saveTimer = 0;
     this.labelsVersion++; // 标题可能改了，时间轴刻度的读屏标签跟着刷新
     this.persist();
     this.render();
@@ -671,19 +888,11 @@ export class App {
     this.controller.kick();
   };
 
-  /** 点编辑卡外面 / Esc：放弃这次的修改，恢复到打开编辑卡之前，然后关闭 */
+  /** “取消”按钮、点编辑卡外面、Esc：放弃这次的修改，恢复到打开编辑卡之前，然后关闭 */
   private cancelEdit = (): void => {
     if (!this.ui.editing) return;
-    const snap = this.editSnapshot;
-    if (snap) {
-      this.lib.series = snap.series.map((s) => ({ ...s }));
-      for (const w of this.lib.works) {
-        const s = snap.works.get(w.id);
-        if (!s) continue;
-        w.series = s.series;
-        if (s.customTitle) w.customTitle = s.customTitle;
-        else delete w.customTitle;
-      }
+    if (this.editSnapshot) {
+      restoreEdit(this.lib, this.editSnapshot);
       this.indexSeries();
     }
     this.finishEdit();
@@ -702,7 +911,7 @@ export class App {
         {
           label: t('ctx.copyImage'),
           icon: ICON_COPY,
-          run: () => void copyImage(assetUrl(file)).then(() => this.toast.show(t('toast.copied')), fail),
+          run: () => void this.copyWork(w).then(() => this.toast.show(t('toast.copied')), fail),
         },
         {
           label: t('ctx.saveAs'),
@@ -888,25 +1097,51 @@ export class App {
     const { cur, frac } = currentOf(m.pos, n);
     const wc = works[cur];
     const sc = this.seriesOf(wc);
-    // 同系列的所有作品（含当前）；系列视图的缩略图按窗口能放下的数量分页
-    const series: number[] = [];
-    for (let i = 0; i < n; i++) if (works[i].series === wc.series) series.push(i);
+    // 全屏时换了作品（左右切换、时间轴）：缩放回到适应屏幕
+    if (cur !== this.fsCur) {
+      this.fsCur = cur;
+      if (m.fzT !== 1 || m.fpxT !== 0 || m.fpyT !== 0) this.controller.resetFsView();
+    }
+    // 同系列的所有作品（含当前，查表）；系列视图的缩略图按窗口能放下的数量分页
+    const series = this.membersOf(wc.series);
     if (cur !== this.pageCur) {
       this.pageCur = cur;
       this.pageSel = null; // 换了作品：回到“当前那幅所在的页”
     }
-    const page = thumbPage(series, cur, this.thumbCapsFor(vw, vh), this.pageSel);
-    this.lastPage = page;
+    // 分页结果在系列、当前作品、每页容量、手动翻页都没变时沿用（不每帧重算，数组身份也不变）
+    const caps = this.thumbCapsFor(vw, vh);
+    const pk = this.pageKey;
+    if (!pk || pk.series !== series || pk.cur !== cur || pk.caps !== caps || pk.sel !== this.pageSel) {
+      this.lastPage = thumbPage(series, cur, caps, this.pageSel);
+      this.pageKey = { series, cur, caps, sel: this.pageSel };
+    }
+    const page = this.lastPage!;
     const fade = rowFade(frac);
     const zc = clamp(m.zoom, 0, 1);
     const mag = clamp(m.mag, 0, 1);
 
     this.requestHiRes(wc);
-    if (this.thumbs && (cur !== this.loaderCur || works !== this.loaderWorks)) {
+    // 左上角计数圆环外圈的主题色：左右翻动中直接用每幅的主色（零开销，颜色跟着快速流动），
+    // 停下后再抓完整的主题色（有缓存）
+    const flipping = this.ui.axis === 'x' || Math.abs(m.pos - m.posT) > 0.002 || Math.abs(m.posV) > 0.05;
+    this.palette.request(wc, flipping);
+    // 缩略图队列：当前位置附近优先；系列视图里这一页的缩略图排最前（同系列的作品可能离得很远）
+    if (this.thumbs && (cur !== this.loaderCur || works !== this.loaderWorks || page.items !== this.loaderPage)) {
       this.loaderCur = cur;
       this.loaderWorks = works;
-      this.thumbs.update(works, cur);
+      this.loaderPage = page.items;
+      this.thumbs.update(works, cur, zc > 0.01 ? page.items : []);
     }
+    // 这一帧哪些 GIF 用动图（中间、两侧、系列视图这一页，有数量上限）
+    const anim = this.pickAnimated(works, cur, page.items, zc, mag);
+    // 画面在动（拖动、甩动、推拉镜头、放大缩小、缩略图翻页入场）时，中间那幅以外的 GIF 先暂停：
+    // 两侧的画作在磨砂玻璃后面，动图每换一帧都要重算滤镜和玻璃的背景模糊，和画面移动叠在一起就掉帧。
+    // 循环停下前的最后一帧各个值都已吸附到位，这时恢复播放
+    const moving =
+      this.ui.axis !== null ||
+      Math.abs(m.pos - m.posT) > 0.002 || Math.abs(m.posV) > 0.05 ||
+      Math.abs(m.zoom - m.zoomT) > 0.002 || Math.abs(m.zoomV) > 0.05 ||
+      Math.abs(m.mag - m.magT) > 0.002 || m.pg < 0.999;
 
     this.stage.render({
       works, pos: m.pos, posV: m.posV, zoom: m.zoom, zoomV: m.zoomV, press: m.press,
@@ -915,6 +1150,8 @@ export class App {
       grabbing: this.ui.axis !== null,
       reduced: this.controller.reduced,
       hiRes: this.hiRes,
+      anim,
+      animPlay: !moving,
       mag,
       fs: clamp(m.fs, 0, 1),
     });
@@ -927,16 +1164,24 @@ export class App {
       : { cx: vw / 2, cy: vh / 2, w: 0, h: 0 };
     this.magnifier.render({
       work: wc,
-      src: this.hiRes && this.hiRes.id === wc.id ? this.hiRes.url : wc.thumb,
+      src: this.hiRes && this.hiRes.id === wc.id ? this.hiRes.url : (anim.get(wc.id) ?? wc.thumb),
       mag,
       fs: clamp(m.fs, 0, 1),
       card,
       frac,
       vw,
       vh,
+      // 全屏时的滚轮缩放 / 平移（只在全屏里有，其余时候是适应屏幕）
+      view: { z: m.fz, px: m.fpx, py: m.fpy },
       animating:
-        Math.abs(m.mag - m.magT) > 1e-3 || Math.abs(m.magV) > 1e-3 || Math.abs(m.fs - m.fsT) > 1e-3 || Math.abs(m.fsV) > 1e-3,
+        Math.abs(m.mag - m.magT) > 1e-3 || Math.abs(m.magV) > 1e-3 || Math.abs(m.fs - m.fsT) > 1e-3 || Math.abs(m.fsV) > 1e-3 ||
+        Math.abs(m.fz - m.fzT) > 1e-3 || Math.abs(m.fzV) > 1e-3,
     });
+    // 缩放倍率：100% = 原图一个像素对一个屏幕物理像素（和 Windows 照片查看器一样）
+    if (this.zoomBadge.classList.contains('is-visible')) {
+      const b = magnifyTargets(aspectOf(wc), vw, vh).full;
+      this.zoomBadgeText.text(`${zoomPercent(m.fz, b.w, wc.width, window.devicePixelRatio || 1)}%`);
+    }
 
     // 放大时信息卡、时间轴、提示、系列胶囊淡出，不挡画
     const uiOpacity = 1 - mag;
@@ -946,7 +1191,7 @@ export class App {
     this.timelineFade.set('pointer-events', mag > 0.5 ? 'none' : 'auto');
 
     this.hud.render({
-      cur, n, zc,
+      cur, n, zc, pos: m.pos, flipping,
       level: cameraLevel(m.zoom, m.mag),
       meterVisible: this.ui.axis === 'y',
       hintVisible: !this.ui.touched && mag < 0.01,
@@ -966,13 +1211,19 @@ export class App {
       edit = {
         work: ew,
         series: this.seriesOf(ew),
-        chips: visibleSeries(this.lib).map((s) => ({
+        chips: this.seriesInUse().map((s) => ({
           id: s.id, name: displayName(s), color: s.color, selected: s.id === ew.series,
         })),
+        // 和打开时比有没有改动：没有改动时“取消”按钮不可点
+        dirty: this.editDirty,
       };
     }
     this.info.render({ work: wc, series: sc, count: series.length, frac, zoom: zc, edit });
-    this.timeline.render({ works, cur, pos: m.pos, vel: m.posV, labelsVersion: this.labelsVersion });
+    this.timeline.render({
+      works, cur, pos: m.pos, vel: m.posV, labelsVersion: this.labelsVersion, members: series,
+      // 同系列刻度用系列的主题色高亮；未归类保持原来的灰色（2026-11-18）
+      seriesColor: wc.series === UNSORTED_ID ? null : sc.color,
+    });
 
     if (cur !== this.announced) {
       // 首次渲染不播报，之后每次切换作品播报“标题，日期，系列名”

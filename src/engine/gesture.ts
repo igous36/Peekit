@@ -123,3 +123,21 @@ export function releaseLevel(samples: readonly Sample[], levelT: number, from: C
   const to = proj > 0.5 ? 1 : proj < -0.5 ? -1 : 0;
   return clamp(to, from - 1, from + 1) as CameraLevel;
 }
+
+// ───────────── 放大时继续往上拖：进全屏（2026-11-18） ─────────────
+//
+// 只有按下时就在放大（from = −1）才算：从单幅一路往上拖，这次最多到放大（和滚轮的卡位一个道理，防冲过头）。
+// 拖过放大那一档后，画面往全屏方向走（深色底淡入、画面变大），带橡皮筋；松手时拉过 FS_PULL_ENTER 就进全屏，否则弹回。
+
+/** 松手时超过放大这么多（档位单位，一档 = 窗口高 × 0.35，未加橡皮筋）就进全屏：约窗口高的 10% */
+export const FS_PULL_ENTER = 0.3;
+/** 拖动中全屏预览最多到这么多（fs 的目标值，< 0.5，不会真的切到系统全屏） */
+export const FS_PREVIEW_MAX = 0.45;
+
+/** 拖过放大那一档多少（档位单位，未加橡皮筋）；没拖过是 0 */
+export function fsPull(l0: number, dy: number, vh: number): number {
+  return Math.max(0, -1 - (l0 + dy / (vh * ZOOM_DRAG_SPAN)));
+}
+
+/** 拖动中全屏的预览（越拉越难拉，最多 FS_PREVIEW_MAX）；拉到 FS_PULL_ENTER 时约 0.25 */
+export const fsPreview = (pull: number): number => FS_PREVIEW_MAX * (1 - 1 / (1 + Math.max(0, pull) * 4));

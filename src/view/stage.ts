@@ -35,6 +35,10 @@ interface Slot {
   art: ArtSize;
   index: number;
   shown: boolean;
+  /** GIF 动图层（叠在静态缩略图上面）和它当前的地址、是否在播放 */
+  anim: HTMLImageElement;
+  animSrc: string | null;
+  animOn: boolean;
 }
 
 interface TileSlot {
@@ -71,6 +75,13 @@ export interface StageFrame {
   reduced: boolean;
   /** 已经解码好的原图（只给停留超过 300ms 的那一幅） */
   hiRes: { id: string; url: string } | null;
+  /** 这一帧用动图的 GIF（作品 id → 已解码好的动图地址），画作和缩略图都用；不在里面的用静态缩略图 */
+  anim?: ReadonlyMap<string, string>;
+  /**
+   * 中间那幅以外的 GIF 现在能不能播放：画面在动（拖动、甩动、推拉、放大缩小、翻页）时为 false，
+   * 这时只有中间那幅在动，其余显示静态缩略图，停稳后再播放
+   */
+  animPlay?: boolean;
   /** 放大查看程度 0–1：中间那张由放大层接替，其他画作淡出 */
   mag: number;
   /** 全屏程度 0–1：到 1 时深色底已经盖满窗口，玻璃网格整个隐藏（省掉所有背景模糊） */
@@ -153,11 +164,14 @@ export class StageView {
       shadowSide = new Styled(s);
       children.push(c, s);
     }
-    children.push(canvas);
+    // GIF 动图层：叠在静态缩略图上面，只在“该动”时显示（见 setAnim）
+    const anim = el('img', { class: 'art-anim', alt: '', draggable: 'false', decoding: 'async', 'aria-hidden': 'true' });
+    children.push(canvas, anim);
     const btn = el('button', { type: 'button', class: cls, tabindex: -1 }, children);
     const slot: Slot = {
       node: new Styled(btn), canvas, shadowCenter, shadowSide,
       workId: null, key: '', aspect: NaN, art: DEFAULT_ART, index: -1, shown: true,
+      anim, animSrc: null, animOn: false,
     };
     btn.addEventListener('click', () => {
       if (slot.index >= 0) this.handlers.go?.(slot.index, fromThumb);
@@ -172,10 +186,30 @@ export class StageView {
   }
 
   private hide(slot: Slot): void {
+    this.setAnim(slot, undefined, false);
     if (!slot.shown) return;
     slot.shown = false;
     slot.node.set('visibility', 'hidden');
     slot.node.set('pointer-events', 'none');
+  }
+
+  /**
+   * GIF 动图层：url 是这一格该用的动图（没有就是不动），play 决定现在是否显示（显示才播放）。
+   * 暂停只是把这一层藏起来：浏览器不画看不见的动图，就不会每帧重画卡片、重算它的滤镜和上面玻璃的背景模糊；
+   * 静态缩略图一直垫在下面，不用拆掉重建 <img>。不再用的动图去掉地址，让浏览器回收
+   */
+  private setAnim(slot: Slot, url: string | undefined, play: boolean): void {
+    const src = url ?? null;
+    if (src !== slot.animSrc) {
+      slot.animSrc = src;
+      if (src) slot.anim.src = src;
+      else slot.anim.removeAttribute('src');
+    }
+    const on = !!src && play;
+    if (on !== slot.animOn) {
+      slot.animOn = on;
+      slot.anim.style.visibility = on ? 'visible' : 'hidden';
+    }
   }
 
   /** 换作品 / 图片到位 / 读图失败时重新填充内容；比例变了才改卡片宽高 */
@@ -269,6 +303,9 @@ export class StageView {
       const w = works[i];
       const src = f.hiRes && f.hiRes.id === w.id ? f.hiRes.url : w.thumb;
       this.fill(slot, w, src, artSize);
+      // GIF：中间那幅一直动（放大查看时由放大层接替）；其余只在画面停稳时动
+      const isCur = i === f.cur;
+      this.setAnim(slot, f.anim?.get(w.id), isCur ? f.mag < 0.001 : !!f.animPlay);
       const p = paintingAt(i - pos, inp, slot.art);
       if (!p) {
         this.hide(slot);
@@ -361,6 +398,8 @@ export class StageView {
         continue;
       }
       this.fill(slot, w, w.thumb, thumbSize);
+      // 系列视图的缩略图：镜头停稳后才动（拉远 / 推回、翻页入场的过程中显示静态缩略图）
+      this.setAnim(slot, f.anim?.get(w.id), !!f.animPlay && tf.e > 0.99);
       slot.node.attr('aria-label', t('thumb.view', { title: displayTitle(w), date: w.date || t('date.unknown') }));
       const node = slot.node;
       if (!slot.shown) {

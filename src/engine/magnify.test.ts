@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fitRect, magnifyTargets, magnifierRect, magnifierTransform, cardRect, MAG_MARGIN } from './magnify';
+import { fitRect, magnifyTargets, magnifierRect, magnifierTransform, cardRect, MAG_MARGIN, magFrameRadius } from './magnify';
 import { needsOriginalFor } from './mapping';
 import { monthJump, timelineLabels, placeLabels, monthKey } from './months';
 
@@ -87,9 +87,47 @@ describe('时间轴月份', () => {
     expect(timelineLabels(dates, 'en').map((l) => l.text)).toEqual(['2025', 'Apr', 'May', '2026']);
   });
 
-  it('太挤时月份让位：年份全部保留', () => {
-    const labels = timelineLabels(dates, 'zh');
-    expect(placeLabels(labels, [0, 20, 60, 100])).toEqual([true, false, true, true]);
-    expect(placeLabels(labels, [0, 10, 15, 20])).toEqual([true, false, false, true]);
+  it('太挤时月份先让位；年份之间太近时年份也让位（覆盖作品多的年份优先）', () => {
+    const labels = timelineLabels(dates, 'zh'); // 2025@0、4月@2、5月@3、2026@5，共 7 幅
+    expect(placeLabels(labels, [0, 20, 60, 100], 34, 7)).toEqual([true, false, true, true]);
+    // 两个年份只隔 20px：2025 覆盖 5 幅、2026 覆盖 2 幅，留 2025
+    expect(placeLabels(labels, [0, 10, 15, 20], 34, 7)).toEqual([true, false, false, false]);
+  });
+
+  it('几万幅、跨几十年：显示出来的标签互不重叠，大部分作品所在的年份一定显示', () => {
+    // 1990–2024 每年 10 幅，2025 年 9 万幅；轨道 800px，按下标均匀分布
+    const ds: string[] = [];
+    for (let y = 1990; y <= 2024; y++) for (let k = 0; k < 10; k++) ds.push(`${y}.01.01`);
+    for (let k = 0; k < 90000; k++) ds.push(`2025.${String(1 + Math.floor(k / 7500)).padStart(2, '0')}.01`);
+    const labels = timelineLabels(ds, 'zh');
+    const xs = labels.map((l) => (l.index / (ds.length - 1)) * 800);
+    const show = placeLabels(labels, xs, 34, ds.length);
+    const shown = xs.filter((_, i) => show[i]).sort((a, b) => a - b);
+    for (let i = 1; i < shown.length; i++) expect(shown[i] - shown[i - 1]).toBeGreaterThanOrEqual(34);
+    expect(show[labels.findIndex((l) => l.text === '2025')]).toBe(true);
+    expect(labels.filter((l, i) => l.kind === 'year' && show[i]).length).toBeLessThan(5);
+  });
+});
+
+describe('放大层和卡片交接（2026-11-18）', () => {
+  // 卡片圆角 18.87；放大层排版尺寸下 21.56，放大后 scale 0.92（看起来 19.84）；交接时 scale 0.45
+  const CARD = 18.87, FRAME = 21.56, S0 = 0.45, S1 = 0.92, MAG_R = FRAME * S1;
+  it('mag = 0：屏幕上看起来的圆角和卡片一样（放大层自己的值 × s = 卡片圆角）', () => {
+    expect(magFrameRadius(0, 0, S0, CARD, MAG_R) * S0).toBeCloseTo(CARD, 6);
+  });
+  it('mag = 1：和原来的放大层一样', () => {
+    expect(magFrameRadius(1, 0, S1, CARD, MAG_R)).toBeCloseTo(FRAME, 6);
+  });
+  it('中间直线过渡（看起来的圆角不忽大忽小），全屏归零', () => {
+    let prev = -Infinity;
+    for (let m = 0; m <= 1.0001; m += 0.1) {
+      const s = S0 + (S1 - S0) * m;
+      const apparent = magFrameRadius(m, 0, s, CARD, MAG_R) * s;
+      expect(apparent).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(apparent).toBeLessThanOrEqual(MAG_R + 1e-9);
+      prev = apparent;
+    }
+    expect(magFrameRadius(1, 1, 1, CARD, MAG_R)).toBe(0);
+    expect(magFrameRadius(0, 0, 0, CARD, MAG_R)).toBe(0);
   });
 });

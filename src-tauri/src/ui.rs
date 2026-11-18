@@ -14,13 +14,17 @@ fn theme_file(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("theme"))
 }
 
-/// 启动时：上次是深色就先把窗口底色换成深色（tauri.conf.json 里写死的是浅色），避免先闪一下浅灰
+/// 启动时：上次是深色就先把窗口底色换成深色（tauri.conf.json 里写死的是浅色），避免先闪一下浅灰。
+/// 第一次启动还没有记录时（2026-11-18 起新安装默认跟随系统）按系统当前的深浅来
 pub fn apply_saved_theme(app: &AppHandle) {
-    let dark = theme_file(app).and_then(|f| std::fs::read_to_string(f).ok()).is_some_and(|s| s.trim() == "dark");
+    let Some(w) = app.get_webview_window("main") else { return };
+    let saved = theme_file(app).and_then(|f| std::fs::read_to_string(f).ok());
+    let dark = match saved {
+        Some(s) => s.trim() == "dark",
+        None => matches!(w.theme(), Ok(tauri::Theme::Dark)),
+    };
     if dark {
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.set_background_color(Some(BG_DARK));
-        }
+        let _ = w.set_background_color(Some(BG_DARK));
     }
 }
 

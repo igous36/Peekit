@@ -34,6 +34,19 @@ export interface Motion {
    */
   pg: number;
   pgV: number;
+  /**
+   * 全屏时的滚轮缩放（2026-11-18 新增，见 engine/fszoom.ts）：fz 缩放（1 = 适应屏幕），
+   * fpx / fpy 画面中心相对屏幕中心的偏移（px）。拖动平移时当前值和目标一起改（跟手），其余时候弹簧过去
+   */
+  fz: number;
+  fzT: number;
+  fzV: number;
+  fpx: number;
+  fpxT: number;
+  fpxV: number;
+  fpy: number;
+  fpyT: number;
+  fpyV: number;
 }
 
 export function createMotion(pos0: number, zoom0 = 0): Motion {
@@ -46,5 +59,8 @@ export function createMotion(pos0: number, zoom0 = 0): Motion {
     mag: 0, magT: 0, magV: 0,
     fs: 0, fsT: 0, fsV: 0,
     pg: 1, pgV: 0,
+    fz: 1, fzT: 1, fzV: 0,
+    fpx: 0, fpxT: 0, fpxV: 0,
+    fpy: 0, fpyT: 0, fpyV: 0,
   };
 }

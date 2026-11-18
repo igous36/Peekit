@@ -8,18 +8,28 @@
 //     旅行速写    36   ✎ 🗑
 //   + 新建预览集
 //   ───────
-//   外观  [浅色] [深色] [跟随系统]      ← 2026-11-17 新增
-//   语言  [中文] [English]
-//   ───────
 //   ⓘ 关于 Peekit                      ← 2026-11-17 新增
+//
+// 2026-11-18：
+// - “查看 ›”放在“导入文件夹到…”下面，悬停或点击在右边弹出（级联子菜单，见 flyout.ts）：
+//     颜色模式   (☀ ◐ ☾)      ← 三档拨动开关（theme-switch.ts），原来的“外观”三个按钮去掉
+//     界面语言              ›  ← 再弹出一级：10 种语言，原来的“语言”两个按钮去掉
+//     ───────
+//     刷新                 F5  ← 重新扫描当前预览集导入过的文件夹 / 文件
+// - 右键预览集：修改名称 / 创建副本 / 删除预览集（改名、删除走原来那套原地输入框和确认）
 //
 // 面板内容在每次打开 / 切换视图 / 改名删除后重建（用户操作时，不在每帧）。
 // 进出二级视图时有过渡（2026-11-17 新增）：旧内容滑出淡出、新内容从另一侧滑入，面板高度跟着过渡。
-import { lang, setLang, t, type Lang, type MessageKey } from '../i18n';
-import { setThemePref, themePref, type ThemePref } from '../theme';
+import { LANGS, lang, langLocalName, LANG_NATIVE, langTag, setLang, t, type MessageKey } from '../i18n';
+import { setThemePref, themePref } from '../theme';
 import { SET_NAME_MAX } from '../data/sets';
-import { el, svgIcon, ICON_CHECK, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_TRASH } from './dom';
+import {
+  el, svgIcon, ICON_CHECK, ICON_COPY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_TRASH,
+} from './dom';
 import { Dropdown } from './dropdown';
+import { Flyout } from './flyout';
+import { ThemeSwitch } from './theme-switch';
+import { menuPoint, type CtxItem } from './context-menu';
 
 const ICON_MENU = ['M4 7h16', 'M4 12h16', 'M4 17h16'];
 
@@ -44,6 +54,12 @@ export interface MenuHandlers {
   newSet: () => void;
   renameSet: (id: string, name: string) => void;
   deleteSet: (id: string) => void;
+  /** 复制预览集，返回副本的 id（失败返回 null） */
+  duplicateSet: (id: string) => string | null;
+  /** 刷新：重新扫描当前预览集 */
+  refresh: () => void;
+  /** 弹出右键菜单（全局只有一个，由 app 持有） */
+  contextMenu: (items: CtxItem[], x: number, y: number, label: string) => void;
   /** 打开“关于 Peekit” */
   about: () => void;
 }
@@ -55,6 +71,9 @@ export class AppMenu {
   private view: 'main' | ImportKind = 'main';
   private editing: string | null = null;
   private confirming: string | null = null;
+  private viewFly: Flyout;
+  private langFly: Flyout;
+  private themeSwitch: ThemeSwitch;
 
   constructor(private handlers: MenuHandlers) {
     const button = el(
@@ -74,8 +93,13 @@ export class AppMenu {
       this.view = 'main';
       this.editing = null;
       this.confirming = null;
+      this.viewFly.close();
       this.rebuild();
     });
+    this.themeSwitch = new ThemeSwitch((p) => setThemePref(p));
+    this.viewFly = new Flyout(this.root, () => this.viewItems(), () => t('menu.view'));
+    this.langFly = new Flyout(this.root, () => this.langItems(), () => t('view.language'));
+    this.viewFly.child = this.langFly;
   }
 
   get isOpen(): boolean {
@@ -86,6 +110,14 @@ export class AppMenu {
 
   private rebuild(): void {
     this.panel.replaceChildren(...(this.view === 'main' ? this.mainView() : this.importView(this.view)));
+    // “查看”子菜单跟到新的那一项上（开着就刷新内容）；不在主视图就收起
+    const anchor = this.panel.querySelector<HTMLElement>('[data-flyout="view"]');
+    if (anchor) {
+      this.viewFly.attach(anchor);
+      this.viewFly.refresh();
+    } else {
+      this.viewFly.close();
+    }
   }
 
   private go(view: 'main' | ImportKind, focus?: (el: HTMLElement) => boolean): void {
@@ -155,9 +187,12 @@ export class AppMenu {
 
   private mainView(): HTMLElement[] {
     const chevron = () => el('span', { class: 'menu-trail' }, [svgIcon(ICON_NEXT, 14)]);
+    const view = this.item(t('menu.view'), () => {}, { trail: chevron() });
+    view.dataset.flyout = 'view';
     const out: HTMLElement[] = [
       this.item(t('menu.importFilesTo'), () => this.go('files'), { trail: chevron() }),
       this.item(t('menu.importFolderTo'), () => this.go('folder'), { trail: chevron() }),
+      view,
       this.divider(),
       this.caption('sets.title'),
     ];
@@ -168,11 +203,6 @@ export class AppMenu {
         this.handlers.newSet();
       }, { icon: ICON_PLUS, cls: 'menu-item--new' }),
       this.divider(),
-      this.caption('menu.theme'),
-      this.themeRow(),
-      this.caption('menu.language'),
-      this.langRow(),
-      this.divider(),
       this.item(t('about.menu'), () => {
         this.dropdown.close(false);
         this.handlers.about();
@@ -181,23 +211,94 @@ export class AppMenu {
     return out;
   }
 
-  /** 外观：浅色 / 深色 / 跟随系统（和语言同一种分段按钮） */
-  private themeRow(): HTMLElement {
-    const row = el('div', { class: 'menu-langs menu-langs--3', role: 'group', 'aria-label': t('menu.theme') });
-    for (const p of ['light', 'dark', 'system'] as ThemePref[]) {
-      const on = themePref() === p;
+  // ───────────── 查看（级联子菜单） ─────────────
+
+  /** 查看：颜色模式开关、界面语言 ›、刷新 */
+  private viewItems(): HTMLElement[] {
+    this.themeSwitch.set(themePref());
+    this.themeSwitch.relabel();
+    const scheme = el('div', { class: 'menu-switch-row', role: 'none' }, [
+      el('span', { class: 'menu-label', 'aria-hidden': 'true' }, [t('view.colorScheme')]),
+      this.themeSwitch.root,
+    ]);
+    const language = this.item(t('view.language'), () => {}, {
+      trail: el('span', { class: 'menu-trail' }, [svgIcon(ICON_NEXT, 14)]),
+    });
+    language.dataset.flyout = 'lang';
+    this.langFly.attach(language);
+    const refresh = this.item(t('view.refresh'), () => {
+      this.dropdown.close(true);
+      this.handlers.refresh();
+    }, { trail: el('span', { class: 'menu-kbd' }, ['F5']) });
+    return [scheme, language, this.divider(), refresh];
+  }
+
+  /** 界面语言：本族语名字 + 当前界面语言里的名字（灰色），当前语言打勾 */
+  private langItems(): HTMLElement[] {
+    return LANGS.map((l) => {
+      const on = lang() === l;
+      const native = LANG_NATIVE[l];
+      const local = langLocalName(l);
+      const label = el('span', { class: 'menu-label', lang: langTag(l) }, [native]);
       const b = el('button', {
-        type: 'button', class: `menu-lang${on ? ' is-selected' : ''}`, role: 'menuitemradio', 'aria-checked': String(on),
-        'data-theme-pref': p,
-      }, [t(`theme.${p}` as MessageKey)]);
+        type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(on), 'data-lang': l,
+      }, [
+        el('span', { class: 'menu-lead' }, on ? [svgIcon(ICON_CHECK, 16)] : []),
+        label,
+        ...(local && local !== native ? [el('span', { class: 'menu-trail' }, [local])] : []),
+      ]);
       b.addEventListener('click', () => {
-        setThemePref(p);
+        if (lang() === l) return;
+        setLang(l);
+        // 换了语言：主面板、查看、语言列表都按新语言重建（保持打开，焦点放在刚选的语言上）
         this.rebuild();
-        this.dropdown.focusItem((x) => x.dataset.themePref === p);
+        this.langFly.items().find((x) => x.dataset.lang === l)?.focus({ preventScroll: true });
       });
-      row.append(b);
-    }
-    return row;
+      return b;
+    });
+  }
+
+  // ───────────── 预览集 ─────────────
+
+  /** 右键预览集：修改名称 / 创建副本 / 删除预览集 */
+  private setMenu(s: SetInfo, e: MouseEvent, target: HTMLElement): void {
+    e.preventDefault();
+    e.stopPropagation();
+    const { x, y } = menuPoint(e, target);
+    const items: CtxItem[] = [
+      { caption: s.name },
+      { label: t('ctx.renameSet'), icon: ICON_PENCIL, run: () => this.beginRename(s.id) },
+      {
+        label: t('ctx.duplicateSet'),
+        icon: ICON_COPY,
+        run: () => {
+          const id = this.handlers.duplicateSet(s.id);
+          this.rebuild();
+          this.dropdown.focusItem((x) => x.dataset.set === id);
+        },
+      },
+      'divider',
+      { label: t('ctx.deleteSet'), icon: ICON_TRASH, danger: true, run: () => this.beginDelete(s.id) },
+    ];
+    this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));
+  }
+
+  /** 原地改名（输入框） */
+  private beginRename(id: string): void {
+    this.editing = id;
+    this.confirming = null;
+    this.rebuild();
+    const input = this.panel.querySelector<HTMLInputElement>('.menu-input');
+    input?.focus();
+    input?.select();
+  }
+
+  /** 原地确认删除 */
+  private beginDelete(id: string): void {
+    this.confirming = id;
+    this.editing = null;
+    this.rebuild();
+    this.dropdown.focusItem((x) => x.dataset.cancel === id);
   }
 
   private setRow(s: SetInfo): HTMLElement {
@@ -223,24 +324,16 @@ export class AppMenu {
       type: 'button', class: 'menu-icon', role: 'menuitem', 'aria-label': t('sets.rename', { name: s.name }),
       title: t('sets.rename', { name: s.name }), 'data-rename': s.id,
     }, [svgIcon(ICON_PENCIL, 15)]);
-    rename.addEventListener('click', () => {
-      this.editing = s.id;
-      this.confirming = null;
-      this.rebuild();
-      this.panel.querySelector<HTMLInputElement>('.menu-input')?.select();
-      this.panel.querySelector<HTMLInputElement>('.menu-input')?.focus();
-    });
+    rename.addEventListener('click', () => this.beginRename(s.id));
     const del = el('button', {
       type: 'button', class: 'menu-icon', role: 'menuitem', 'aria-label': t('sets.delete', { name: s.name }),
       title: t('sets.delete', { name: s.name }), 'data-delete': s.id,
     }, [svgIcon(ICON_TRASH, 15)]);
-    del.addEventListener('click', () => {
-      this.confirming = s.id;
-      this.editing = null;
-      this.rebuild();
-      this.dropdown.focusItem((x) => x.dataset.cancel === s.id);
-    });
-    return el('div', { class: 'menu-set', role: 'none' }, [main, rename, del]);
+    del.addEventListener('click', () => this.beginDelete(s.id));
+    const row = el('div', { class: 'menu-set', role: 'none' }, [main, rename, del]);
+    // 右键（或菜单键 / Shift+F10）整行都可以
+    row.addEventListener('contextmenu', (e) => this.setMenu(s, e, main));
+    return row;
   }
 
   private renameRow(s: SetInfo): HTMLElement {
@@ -328,20 +421,4 @@ export class AppMenu {
     return out;
   }
 
-  private langRow(): HTMLElement {
-    const row = el('div', { class: 'menu-langs', role: 'group', 'aria-label': t('menu.language') });
-    for (const l of ['zh', 'en'] as Lang[]) {
-      const on = lang() === l;
-      const b = el('button', {
-        type: 'button', class: `menu-lang${on ? ' is-selected' : ''}`, role: 'menuitemradio', 'aria-checked': String(on),
-      }, [t(`lang.${l}` as MessageKey)]);
-      b.addEventListener('click', () => {
-        setLang(l);
-        this.rebuild();
-        this.dropdown.focusItem((x) => x.getAttribute('aria-checked') === 'true' && x.classList.contains('menu-lang'));
-      });
-      row.append(b);
-    }
-    return row;
-  }
 }

@@ -48,4 +48,43 @@ describe('缩略图队列', () => {
     expect(works[0].broken).toBe(true);
     expect(settled).toEqual(['p0']);
   });
+
+  it('作品很多时只预先生成当前位置附近的；走过去再生成那边的（2026-11-17）', async () => {
+    const works = Array.from({ length: 200 }, (_, i) => work(i));
+    const done: number[] = [];
+    const loader = new ThumbLoader(
+      async (w) => {
+        done.push(Number(w.id.slice(1)));
+        return { url: 'u', color: null };
+      },
+      () => {},
+      3,
+      10,
+    );
+    loader.update(works, 100);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(done.length).toBe(21);
+    expect(done.every((i) => Math.abs(i - 100) <= 10)).toBe(true);
+    loader.update(works, 150);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(done.filter((i) => Math.abs(i - 150) <= 10).length).toBe(21);
+    expect(done.length).toBe(42);
+  });
+
+  it('指定的优先作品（系列视图这一页）排在最前，哪怕离得很远', async () => {
+    const works = Array.from({ length: 1000 }, (_, i) => work(i));
+    const order: number[] = [];
+    const loader = new ThumbLoader(
+      async (w) => {
+        order.push(Number(w.id.slice(1)));
+        await new Promise((r) => setTimeout(r, 1));
+        return { url: 'u', color: null };
+      },
+      () => {},
+      3,
+      5,
+    );
+    loader.update(works, 0, [900, 950]);
+    expect(order.slice(0, 2)).toEqual([900, 950]);
+  });
 });

@@ -35,34 +35,88 @@ pub fn cache_name(path: &str, mtime: f64, size: u64) -> String {
     format!("{:016x}.webp", fnv1a(key.as_bytes()))
 }
 
-/// 解码（按 EXIF 方向转正）→ 缩到长边 1600 → 有损 WebP；返回主色
-pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
+/// 解码并按 EXIF 方向转正（PNG / JPEG / WebP / GIF / BMP / TIFF；动图取第一帧，多页 TIFF 取第一页）
+pub fn decode_oriented(src: &Path) -> Result<DynamicImage, String> {
     let reader = image::ImageReader::open(src).map_err(|e| e.to_string())?;
     let reader = reader.with_guessed_format().map_err(|e| e.to_string())?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let orientation = decoder.orientation().map_err(|e| e.to_string())?;
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     img.apply_orientation(orientation);
+    Ok(img)
+}
 
+/// 编码成有损 WebP 并写到 out：先写临时文件再改名，避免前端读到写了一半的文件
+fn write_webp(img: &DynamicImage, out: &Path, quality: f32) -> Result<(), String> {
+    let (w, h) = img.dimensions();
+    let encoded = if img.color().has_alpha() {
+        let rgba = img.to_rgba8();
+        webp::Encoder::from_rgba(&rgba, w, h).encode(quality)
+    } else {
+        let rgb = img.to_rgb8();
+        webp::Encoder::from_rgb(&rgb, w, h).encode(quality)
+    };
+    let tmp = out.with_extension("tmp");
+    std::fs::write(&tmp, &*encoded).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, out).map_err(|e| e.to_string())
+}
+
+/// 解码（按 EXIF 方向转正）→ 缩到长边 1600 → 有损 WebP；返回主色
+pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
+    let mut img = decode_oriented(src)?;
     let (w, h) = img.dimensions();
     if w.max(h) > THUMB_EDGE {
         img = img.thumbnail(THUMB_EDGE, THUMB_EDGE);
     }
     let color = dominant_color(&img);
-
-    let (tw, th) = img.dimensions();
-    let encoded = if img.color().has_alpha() {
-        let rgba = img.to_rgba8();
-        webp::Encoder::from_rgba(&rgba, tw, th).encode(WEBP_QUALITY)
-    } else {
-        let rgb = img.to_rgb8();
-        webp::Encoder::from_rgb(&rgb, tw, th).encode(WEBP_QUALITY)
-    };
-    // 先写临时文件再改名，避免前端读到写了一半的文件
-    let tmp = out.with_extension("tmp");
-    std::fs::write(&tmp, &*encoded).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, out).map_err(|e| e.to_string())?;
+    write_webp(&img, out, WEBP_QUALITY)?;
     Ok(color)
+}
+
+// ───────────── 显示用大图（2026-11-17 新增） ─────────────
+//
+// 界面（WebView2）不能直接显示 TIFF。放大查看 / 全屏时要比 1600px 缩略图更清楚的图，
+// 复制图像时要完整的原图像素，这两种都由这里从原图生成并缓存在缩略图目录里：
+// - 看（full = false）：长边不超过 4096 的高质量 WebP（够 4K 屏全屏）
+// - 复制（full = true）：原尺寸 PNG（剪贴板只认 PNG）
+
+/// 显示用大图的长边上限（px）
+pub const DISPLAY_EDGE: u32 = 4096;
+const DISPLAY_QUALITY: f32 = 90.0;
+
+pub fn display_cache_name(path: &str, mtime: f64, size: u64, full: bool) -> String {
+    let key = format!("{path}\u{0}{}\u{0}{size}\u{0}{}", mtime as u64, if full { "png" } else { "display" });
+    format!("{:016x}.{}", fnv1a(key.as_bytes()), if full { "png" } else { "webp" })
+}
+
+pub fn generate_display(src: &Path, out: &Path, full: bool) -> Result<(), String> {
+    let img = decode_oriented(src)?;
+    if full {
+        let tmp = out.with_extension("tmp");
+        img.save_with_format(&tmp, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+        return std::fs::rename(&tmp, out).map_err(|e| e.to_string());
+    }
+    let (w, h) = img.dimensions();
+    let img = if w.max(h) > DISPLAY_EDGE {
+        img.resize(DISPLAY_EDGE, DISPLAY_EDGE, image::imageops::FilterType::CatmullRom)
+    } else {
+        img
+    };
+    write_webp(&img, out, DISPLAY_QUALITY)
+}
+
+/// 前端在放大查看 / 复制 TIFF 时调用：返回显示用大图的路径（有缓存就直接用）
+#[tauri::command]
+pub async fn make_display(app: AppHandle, path: String, mtime: f64, size: u64, full: bool) -> Result<String, String> {
+    let out = thumbs_dir(&app)?.join(display_cache_name(&path, mtime, size, full));
+    if !out.exists() {
+        let target = out.clone();
+        tauri::async_runtime::spawn_blocking(move || generate_display(Path::new(&path), &target, full))
+            .await
+            .map_err(|e| e.to_string())??;
+    }
+    crate::asset_scope::allow_real_file(&app, &out);
+    Ok(out.to_string_lossy().into_owned())
 }
 
 /// 主色：缩到 8×8 后按不透明度加权平均
@@ -100,6 +154,10 @@ fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 #[tauri::command]
 pub async fn make_thumbnail(app: AppHandle, path: String, mtime: f64, size: u64) -> Result<Thumb, String> {
+    // SVG 不生成缩略图：矢量原图本身就是最好的缩略图（所在文件夹 / 文件导入时已经放行）
+    if crate::scan::is_svg(Path::new(&path)) {
+        return Ok(Thumb { path, color: None });
+    }
     let out = thumbs_dir(&app)?.join(cache_name(&path, mtime, size));
     if out.exists() {
         // 文件可能被系统重定向到别处（见 asset_scope.rs），按它的真实位置再放行一次
@@ -147,6 +205,71 @@ mod tests {
         let out2 = dir.join("s.webp");
         generate(&small, &out2).unwrap();
         assert_eq!(image::open(&out2).unwrap().dimensions(), (300, 200));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn gif_bmp_tiff_make_thumbnails() {
+        let dir = std::env::temp_dir().join(format!("peekit-fmt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = image::RgbImage::from_pixel(64, 48, image::Rgb([40, 120, 200]));
+        for ext in ["gif", "bmp", "tif"] {
+            let src = dir.join(format!("a.{ext}"));
+            img.save(&src).unwrap();
+            assert!(crate::scan::is_image(&src), "{ext}");
+            let out = dir.join(format!("{ext}.webp"));
+            let color = generate(&src, &out).unwrap_or_else(|e| panic!("{ext}: {e}"));
+            assert_eq!(image::open(&out).unwrap().dimensions(), (64, 48), "{ext}");
+            assert!(color.starts_with('#'), "{ext}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 手动跑：用一个真实图片文件夹检查每张都能出缩略图（SVG 检查能读出尺寸）。
+    /// `PEEKIT_SAMPLES=D:\some\dir cargo test --lib real_samples -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_samples() {
+        let dir = std::env::var("PEEKIT_SAMPLES").expect("设置 PEEKIT_SAMPLES 为图片文件夹");
+        let out_dir = std::env::temp_dir().join(format!("peekit-samples-{}", std::process::id()));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let p = e.unwrap().path();
+            if !crate::scan::is_image(&p) {
+                continue;
+            }
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            if crate::scan::is_svg(&p) {
+                println!("{name}: SVG 尺寸 {:?}", crate::svg::svg_size(&p));
+                continue;
+            }
+            let out = out_dir.join(format!("{name}.webp"));
+            let t = std::time::Instant::now();
+            match generate(&p, &out) {
+                Ok(c) => println!("{name}: 缩略图 {:?} 主色 {c}，{} ms", image::open(&out).unwrap().dimensions(), t.elapsed().as_millis()),
+                Err(err) => panic!("{name}: {err}"),
+            }
+        }
+        std::fs::remove_dir_all(&out_dir).ok();
+    }
+
+    #[test]
+    fn display_images_for_tiff() {
+        let dir = std::env::temp_dir().join(format!("peekit-disp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("big.tiff");
+        image::RgbImage::from_pixel(5000, 2500, image::Rgb([10, 20, 30])).save(&src).unwrap();
+        // 看：长边缩到 4096 的 WebP
+        let view = dir.join("v.webp");
+        generate_display(&src, &view, false).unwrap();
+        assert_eq!(image::open(&view).unwrap().dimensions(), (4096, 2048));
+        // 复制：原尺寸 PNG
+        let full = dir.join("f.png");
+        generate_display(&src, &full, true).unwrap();
+        assert_eq!(image::open(&full).unwrap().dimensions(), (5000, 2500));
+        // 缓存名：看 / 复制分开，扩展名不同
+        assert_ne!(display_cache_name("a", 1.0, 2, false), display_cache_name("a", 1.0, 2, true));
+        assert!(display_cache_name("a", 1.0, 2, true).ends_with(".png"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

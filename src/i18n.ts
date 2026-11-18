@@ -1,7 +1,20 @@
-// 界面语言：中文 / English。默认跟随系统，切换后记在 localStorage。
+// 界面语言。默认跟随系统，切换后记在 localStorage。
 // 静态文案用 data-i18n* 属性标记，切换语言时 applyI18n() 统一刷新；每帧渲染的动态文案直接调用 t()。
+//
+// 2026-11-18：从中文 / English 扩到 10 种——联合国工作语言（中、英、法、俄、西、阿）加德、意、韩、葡。
+// 中文、英文在这个文件里（中文是基准，键以它为准）；其余在 locales/ 下，每种一个文件。
+// 阿拉伯语只翻译文字，界面布局不做从右到左的镜像（时间轴、卡片的左右有方向含义）。
 
-export type Lang = 'zh' | 'en';
+import { ar } from './locales/ar';
+import { de } from './locales/de';
+import { es } from './locales/es';
+import { fr } from './locales/fr';
+import { it } from './locales/it';
+import { ko } from './locales/ko';
+import { pt } from './locales/pt';
+import { ru } from './locales/ru';
+
+export type Lang = 'zh' | 'en' | 'ar' | 'de' | 'es' | 'fr' | 'it' | 'ko' | 'pt' | 'ru';
 
 const zh = {
   'app.name': 'Peekit',
@@ -25,6 +38,7 @@ const zh = {
   'editor.seriesPlaceholder': '输入系列名',
   'editor.new': '+ 新建系列',
   'editor.done': '完成',
+  'editor.cancel': '取消',
   'pill.pagePrev': '上一页缩略图',
   'pill.pageNext': '下一页缩略图',
   'toast.workRemoved': '已从预览集移除「{title}」',
@@ -34,6 +48,7 @@ const zh = {
   'timeline.prev': '上一幅',
   'timeline.next': '下一幅',
   'timeline.tick': '跳到 {title}，{date}',
+  'timeline.tickRange': '跳到 {from} – {to}（{n} 幅）',
   'card.current': '当前作品：{title}',
   'card.view': '查看 {title}',
   'card.broken': '无法打开这张图',
@@ -45,16 +60,11 @@ const zh = {
   'window.restore': '还原',
   'window.close': '关闭',
   'menu.open': '菜单',
-  'menu.importFiles': '导入文件…',
-  'menu.importFolder': '导入文件夹…',
-  'menu.language': '语言',
-  'lang.zh': '中文',
-  'lang.en': 'English',
   'empty.title': '把插画文件或文件夹拖到这里',
   'empty.or': '或',
   'empty.pickFiles': '选择文件',
   'empty.pickFolder': '选择文件夹',
-  'empty.formats': '支持 PNG、JPG、WebP',
+  'empty.formats': '支持 PNG、JPG、WebP、GIF、BMP、TIFF、SVG',
   'empty.loading': '正在读取作品…',
   'drop.release': '松开即可导入',
   'import.done': '已导入 {n} 幅',
@@ -75,7 +85,6 @@ const zh = {
   'sets.newName': '新预览集',
   'sets.switch': '切换预览集：{name}',
   'sets.new': '+ 新建预览集',
-  'sets.count': '{n} 幅',
   'sets.current': '当前',
   'sets.rename': '重命名「{name}」',
   'sets.delete': '删除「{name}」',
@@ -91,7 +100,6 @@ const zh = {
   'menu.back': '返回',
   'menu.toNewSet': '新建预览集',
   'menu.toExisting': '现有预览集',
-  'menu.theme': '外观',
   'theme.light': '浅色',
   'theme.dark': '深色',
   'theme.system': '跟随系统',
@@ -116,7 +124,7 @@ const zh = {
   'color.sat': '浓淡',
   'color.light': '明暗',
   'color.hex': '色值',
-  'color.presets': '常用色',
+  'color.presets': '预设',
   'color.clay': '陶土',
   'color.mist': '雾蓝',
   'color.wisteria': '藤紫',
@@ -132,6 +140,7 @@ const zh = {
   'pop.cancel': '取消',
   'pop.done': '完成',
   'toast.copied': '已复制图像',
+  'toast.copying': '正在准备图像…',
   'toast.saved': '已另存为 {name}',
   'toast.actionFailed': '操作失败：{msg}',
   'toast.undo': '撤销',
@@ -139,6 +148,24 @@ const zh = {
   'editor.seriesCaption': '所属系列',
   'editor.showAllSeries': '展开全部 {n} 个系列',
   'editor.collapseSeries': '收起系列',
+  // 2026-11-18：查看菜单、刷新、右键预览集
+  'menu.view': '查看',
+  'view.colorScheme': '颜色模式',
+  'view.language': '界面语言',
+  'view.refresh': '刷新',
+  'refresh.running': '正在刷新…',
+  'refresh.done': '已刷新：新增 {added} 幅，移除 {removed} 幅',
+  'refresh.none': '已刷新，没有变化',
+  'refresh.desktopOnly': '刷新只能在桌面版里用',
+  'ctx.renameSet': '修改名称',
+  'ctx.duplicateSet': '创建副本',
+  'ctx.deleteSet': '删除预览集',
+  'sets.copyName': '{name} 副本',
+  'sets.duplicated': '已创建副本「{name}」',
+  // 2026-11-18：左上角计数（圆环 / 文字）
+  'counter.label': '第 {i} 幅，共 {n} 幅',
+  'counter.toText': '点击显示为数字',
+  'counter.toRing': '点击显示为圆环',
 };
 
 export type MessageKey = keyof typeof zh;
@@ -165,6 +192,7 @@ const en: Record<MessageKey, string> = {
   'editor.seriesPlaceholder': 'Series name',
   'editor.new': '+ New series',
   'editor.done': 'Done',
+  'editor.cancel': 'Cancel',
   'pill.pagePrev': 'Previous page of thumbnails',
   'pill.pageNext': 'Next page of thumbnails',
   'toast.workRemoved': 'Removed “{title}” from this collection',
@@ -174,6 +202,7 @@ const en: Record<MessageKey, string> = {
   'timeline.prev': 'Previous',
   'timeline.next': 'Next',
   'timeline.tick': 'Go to {title}, {date}',
+  'timeline.tickRange': 'Go to {from} – {to} ({n} works)',
   'card.current': 'Current: {title}',
   'card.view': 'View {title}',
   'card.broken': 'Can’t open this image',
@@ -185,16 +214,11 @@ const en: Record<MessageKey, string> = {
   'window.restore': 'Restore',
   'window.close': 'Close',
   'menu.open': 'Menu',
-  'menu.importFiles': 'Import files…',
-  'menu.importFolder': 'Import folder…',
-  'menu.language': 'Language',
-  'lang.zh': '中文',
-  'lang.en': 'English',
   'empty.title': 'Drop image files or folders here',
   'empty.or': 'or',
   'empty.pickFiles': 'Choose files',
   'empty.pickFolder': 'Choose folder',
-  'empty.formats': 'PNG, JPG and WebP',
+  'empty.formats': 'PNG, JPG, WebP, GIF, BMP, TIFF and SVG',
   'empty.loading': 'Loading your works…',
   'drop.release': 'Release to import',
   'import.done': 'Imported {n}',
@@ -214,7 +238,6 @@ const en: Record<MessageKey, string> = {
   'sets.newName': 'New collection',
   'sets.switch': 'Switch collection: {name}',
   'sets.new': '+ New collection',
-  'sets.count': '{n}',
   'sets.current': 'current',
   'sets.rename': 'Rename “{name}”',
   'sets.delete': 'Delete “{name}”',
@@ -230,7 +253,6 @@ const en: Record<MessageKey, string> = {
   'menu.back': 'Back',
   'menu.toNewSet': 'New collection',
   'menu.toExisting': 'Existing collections',
-  'menu.theme': 'Appearance',
   'theme.light': 'Light',
   'theme.dark': 'Dark',
   'theme.system': 'System',
@@ -271,6 +293,7 @@ const en: Record<MessageKey, string> = {
   'pop.cancel': 'Cancel',
   'pop.done': 'Done',
   'toast.copied': 'Image copied',
+  'toast.copying': 'Preparing image…',
   'toast.saved': 'Saved as {name}',
   'toast.actionFailed': 'Couldn’t do that: {msg}',
   'toast.undo': 'Undo',
@@ -278,23 +301,86 @@ const en: Record<MessageKey, string> = {
   'editor.seriesCaption': 'Series',
   'editor.showAllSeries': 'Show all {n} series',
   'editor.collapseSeries': 'Show fewer series',
+  'menu.view': 'View',
+  'view.colorScheme': 'Color scheme',
+  'view.language': 'Interface language',
+  'view.refresh': 'Refresh',
+  'refresh.running': 'Refreshing…',
+  'refresh.done': 'Refreshed: {added} added, {removed} removed',
+  'refresh.none': 'Refreshed — no changes',
+  'refresh.desktopOnly': 'Refreshing only works in the desktop app',
+  'ctx.renameSet': 'Rename',
+  'ctx.duplicateSet': 'Duplicate',
+  'ctx.deleteSet': 'Delete collection',
+  'sets.copyName': '{name} copy',
+  'sets.duplicated': 'Created “{name}”',
+  'counter.label': '{i} of {n}',
+  'counter.toText': 'Click to show as numbers',
+  'counter.toRing': 'Click to show as a ring',
 };
 
-export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { zh, en };
+export const MESSAGES: Record<Lang, Record<MessageKey, string>> = { zh, en, ar, de, es, fr, it, ko, pt, ru };
+
+/** 菜单里的顺序：中文、English，其余按英文名排序 */
+export const LANGS: readonly Lang[] = ['zh', 'en', 'ar', 'de', 'es', 'fr', 'it', 'ko', 'pt', 'ru'];
+
+/** 每种语言自己的名字（语言菜单里的主标签） */
+export const LANG_NATIVE: Record<Lang, string> = {
+  zh: '简体中文',
+  en: 'English',
+  ar: 'العربية',
+  de: 'Deutsch',
+  es: 'Español',
+  fr: 'Français',
+  it: 'Italiano',
+  ko: '한국어',
+  pt: 'Português',
+  ru: 'Русский',
+};
+
+/** <html lang> 用的语言标签 */
+export const langTag = (l: Lang): string => (l === 'zh' ? 'zh-CN' : l);
+
+let localNames: { lang: Lang; names: Intl.DisplayNames | null } | null = null;
+
+/** 语言 l 在当前界面语言里叫什么（语言菜单里灰色的副标签）；系统不支持时返回空串 */
+export function langLocalName(l: Lang): string {
+  if (localNames?.lang !== current) {
+    let names: Intl.DisplayNames | null = null;
+    try {
+      names = new Intl.DisplayNames([langTag(current)], { type: 'language' });
+    } catch {
+      /* 不支持 Intl.DisplayNames */
+    }
+    localNames = { lang: current, names };
+  }
+  try {
+    return localNames.names?.of(l === 'zh' ? 'zh-Hans' : l) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+const isLang = (v: unknown): v is Lang => typeof v === 'string' && (LANGS as readonly string[]).includes(v);
 
 const LANG_KEY = 'peekit:lang';
 let current: Lang = detect();
 const listeners = new Set<(l: Lang) => void>();
 
+/** 系统语言（如 zh-CN、pt-BR、de）对应的界面语言；不支持的用英文 */
+export function langFromLocale(locale: string): Lang {
+  const base = locale.toLowerCase().split(/[-_]/)[0];
+  return isLang(base) ? base : 'en';
+}
+
 function detect(): Lang {
   try {
     const saved = localStorage.getItem(LANG_KEY);
-    if (saved === 'zh' || saved === 'en') return saved;
+    if (isLang(saved)) return saved;
   } catch {
     /* 读不到就跟随系统 */
   }
-  const sys = typeof navigator !== 'undefined' ? navigator.language || '' : '';
-  return sys.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  return langFromLocale(typeof navigator !== 'undefined' ? navigator.language || '' : '');
 }
 
 export const lang = (): Lang => current;
@@ -315,7 +401,7 @@ export function setLang(l: Lang): void {
     /* 存不了就只在本次生效 */
   }
   if (typeof document !== 'undefined') {
-    document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en';
+    document.documentElement.lang = langTag(l);
     applyI18n(document.body);
   }
   for (const fn of listeners) fn(l);
@@ -343,5 +429,5 @@ export function applyI18n(root: ParentNode): void {
 
 /** 启动时调用一次：设置 <html lang> */
 export function initI18n(): void {
-  document.documentElement.lang = current === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = langTag(current);
 }

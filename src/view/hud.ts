@@ -2,10 +2,15 @@
 import { r3 } from '../engine/math';
 import { t } from '../i18n';
 import { el, svgIcon, ICON_NEXT, ICON_PENCIL, ICON_PREV, Styled } from './dom';
+import { Counter } from './counter';
 
 export interface HudFrame {
   cur: number;
   n: number;
+  /** 连续位置（拖动 / 动画中有小数，拖过头会出界）：计数圆环的进度和“到头了”提示用 */
+  pos: number;
+  /** 正在左右翻动：计数圆环的颜色、泛光快速跟（2026-11-18） */
+  flipping: boolean;
   /** clamp(zoom, 0, 1) */
   zc: number;
   /** 镜头档位 −1 放大 / 0 单幅 / 1 系列视图（连续值），左侧刻度用 */
@@ -35,8 +40,9 @@ export class Hud {
   readonly pill: HTMLElement;
   readonly hint: HTMLElement;
   readonly live: HTMLElement;
+  /** 左上角的计数：主题色圆环 / 文字（2026-11-18，counter.ts） */
+  readonly counter: Counter;
 
-  private index: Styled;
   private meterEl: Styled;
   private meterFill: Styled;
   private meterKnob: Styled;
@@ -56,15 +62,14 @@ export class Hud {
   constructor(public handlers: HudHandlers = {}) {
     this.dragRegion = el('div', { class: 'drag-region', 'data-tauri-drag-region': true, 'aria-hidden': 'true' });
 
-    const idx = el('span', { class: 'wordmark-index' });
-    // 字标一行：Peekit · 预览集胶囊（由 App 插到 slot 里）· 序号
+    // 字标一行：Peekit · 预览集胶囊（由 App 插到 slot 里）· 计数
+    this.counter = new Counter();
     this.setSlot = el('span', { class: 'wordmark-slot' });
     this.wordmark = el('div', { class: 'wordmark' }, [
       el('span', { class: 'wordmark-name', 'data-i18n': 'app.name' }),
       this.setSlot,
-      idx,
+      this.counter.root,
     ]);
-    this.index = new Styled(idx);
 
     // 左侧刻度（2026-11-17 改成三档）：上 = 放大，中间刻线 = 单幅，下 = 系列视图；
     // 黄点跟着当前档位走，竖条从中间往上 / 往下长
@@ -126,7 +131,7 @@ export class Hud {
   }
 
   render(f: HudFrame): void {
-    this.index.text(`${String(f.cur + 1).padStart(2, '0')} / ${String(f.n).padStart(2, '0')}`);
+    this.counter.render(f.pos, f.cur, f.n, f.flipping);
 
     this.meterEl.set('opacity', f.meterVisible ? '1' : '0');
     // 都用 transform，不改高度 / 位置，避免每帧重排：

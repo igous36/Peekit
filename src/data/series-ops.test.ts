@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { sampleLibrary } from './sample';
 import {
   renameSeries, assignWork, createSeries, finalizeNames, visibleSeries, displayName, displayTitle, setCustomTitle,
-  SERIES_NAME_MAX, TITLE_MAX,
+  SERIES_NAME_MAX, TITLE_MAX, snapshotEdit, restoreEdit, editChanged,
 } from './series-ops';
 import { setLang } from '../i18n';
 
@@ -91,5 +91,40 @@ describe('归入系列 / 新建系列', () => {
     assignWork(lib, 3, 's1');
     expect(visibleSeries(lib).map((x) => x.id)).not.toContain(s.id);
     expect(lib.series.map((x) => x.id)).toContain(s.id);
+  });
+});
+
+describe('编辑卡快照：取消时恢复、判断有没有改动（2026-11-17）', () => {
+  it('刚打开没有改动；改标题 / 系列名 / 归属 / 新建系列都算改动', () => {
+    const lib = sampleLibrary();
+    const snap = snapshotEdit(lib);
+    expect(editChanged(snap, lib)).toBe(false);
+
+    setCustomTitle(lib, 0, '新标题');
+    expect(editChanged(snap, lib)).toBe(true);
+    setCustomTitle(lib, 0, ''); // 改回去：没有改动
+    expect(editChanged(snap, lib)).toBe(false);
+
+    const old = lib.series[0].name;
+    renameSeries(lib, lib.series[0].id, '别的名字');
+    expect(editChanged(snap, lib)).toBe(true);
+    renameSeries(lib, lib.series[0].id, old);
+    expect(editChanged(snap, lib)).toBe(false);
+
+    assignWork(lib, 0, lib.series[1].id === lib.works[0].series ? lib.series[2].id : lib.series[1].id);
+    expect(editChanged(snap, lib)).toBe(true);
+  });
+
+  it('取消：标题、系列名、归属、新建的系列都恢复原样', () => {
+    const lib = sampleLibrary();
+    const before = JSON.stringify({ works: lib.works.map((w) => [w.series, w.customTitle]), series: lib.series });
+    const snap = snapshotEdit(lib);
+    setCustomTitle(lib, 1, '临时');
+    renameSeries(lib, lib.series[0].id, '临时系列');
+    createSeries(lib, 2, ids);
+    expect(editChanged(snap, lib)).toBe(true);
+    restoreEdit(lib, snap);
+    expect(editChanged(snap, lib)).toBe(false);
+    expect(JSON.stringify({ works: lib.works.map((w) => [w.series, w.customTitle]), series: lib.series })).toBe(before);
   });
 });

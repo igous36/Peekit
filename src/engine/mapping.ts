@@ -349,18 +349,34 @@ export interface ThumbPage {
  */
 export function thumbPage(series: readonly number[], cur: number, caps: ThumbCaps, page: number | null = null): ThumbPage {
   const per = Math.max(2, caps.top + caps.bottom);
-  const others = series.filter((i) => i !== cur);
-  let items = others;
+  // series 按时间（下标）从小到大：二分找当前那幅的位置，不扫整个系列（一个系列可能有几万幅）
+  const at = sortedIndexOf(series, cur);
+  const othersCount = series.length - (at >= 0 ? 1 : 0);
+  let items: number[];
   let p = 0;
   let pages = 1;
-  if (others.length > per) {
+  if (othersCount <= per) {
+    items = series.filter((i) => i !== cur);
+  } else {
     pages = Math.ceil(series.length / per);
-    const auto = Math.floor(Math.max(0, series.indexOf(cur)) / per);
+    const auto = Math.floor(Math.max(0, at) / per);
     p = page === null ? auto : clamp(page, 0, pages - 1);
     items = series.slice(p * per, p * per + per).filter((i) => i !== cur);
   }
   const top = clamp(Math.ceil(items.length / 2), items.length - caps.bottom, caps.top);
   return { items, top: clamp(top, 0, items.length), page: p, pages };
+}
+
+/** 在从小到大排好的数组里找 v 的位置，没有返回 −1 */
+export function sortedIndexOf(xs: readonly number[], v: number): number {
+  let lo = 0, hi = xs.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] === v) return mid;
+    if (xs[mid] < v) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return -1;
 }
 
 /** 系列标题胶囊的显示程度 */

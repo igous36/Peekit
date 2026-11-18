@@ -53,14 +53,35 @@ export function cardRect(
   };
 }
 
-/** 当前帧放大层应该在的位置：卡片 → 放大框 → 全屏框 */
-export function magnifierRect(card: Rect, aspect: number | undefined, vw: number, vh: number, mag: number, fs: number): Rect {
+/**
+ * 当前帧放大层应该在的位置：卡片 → 放大框 → 全屏框。
+ * view：全屏时滚轮缩放的视图（2026-11-18，见 fszoom.ts），全屏框按它缩放、平移；不传就是适应屏幕
+ */
+export function magnifierRect(
+  card: Rect, aspect: number | undefined, vw: number, vh: number, mag: number, fs: number,
+  view: { z: number; px: number; py: number } = { z: 1, px: 0, py: 0 },
+): Rect {
   const t = magnifyTargets(aspect, vw, vh);
-  const target = lerpRect(t.enlarged, t.full, clamp(fs, 0, 1));
+  const full = { cx: t.full.cx + view.px, cy: t.full.cy + view.py, w: t.full.w * view.z, h: t.full.h * view.z };
+  const target = lerpRect(t.enlarged, full, clamp(fs, 0, 1));
   return lerpRect(card, target, clamp(mag, 0, 1.2));
 }
 
 /** 放大层按全屏框排版，这里算出把它摆到 rect 需要的 translate（相对全屏框中心）和 scale */
 export function magnifierTransform(rect: Rect, full: Rect): { tx: number; ty: number; s: number } {
   return { tx: rect.cx - full.cx, ty: rect.cy - full.cy, s: rect.w / full.w };
+}
+
+/**
+ * 放大层的圆角（2026-11-18）：放大层按全屏框排版、再缩小（scale = s）摆到位置上，圆角也跟着缩小，
+ * 交接时和卡片对不上（缩回单幅那一下圆角会突然变大）。所以圆角按帧设：
+ * 屏幕上看起来的圆角从卡片的圆角 cardR（mag = 0，和卡片一模一样）直线过渡到放大后看起来的圆角 magR
+ * （mag = 1，和原来一样：放大层排版尺寸下的圆角 × 放大后的 scale），全屏时（fs → 1）归零。
+ * 返回放大层自己坐标里的值（scale 之前），也就是看起来的值 ÷ 当前 scale s。
+ */
+export function magFrameRadius(mag: number, fs: number, s: number, cardR: number, magR: number): number {
+  if (!(s > 0)) return 0;
+  const m = clamp(mag, 0, 1);
+  const apparent = (cardR + (magR - cardR) * m) * (1 - clamp(fs, 0, 1));
+  return apparent / s;
 }

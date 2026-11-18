@@ -1,6 +1,7 @@
 mod asset_scope;
 mod dates;
 mod scan;
+mod svg;
 mod thumbs;
 mod ui;
 
@@ -52,6 +53,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan::scan_sources,
             thumbs::make_thumbnail,
+            thumbs::make_display,
             ui::set_theme_background,
             ui::save_image_as,
             log_error,

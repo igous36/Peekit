@@ -6,7 +6,7 @@ import {
   addSources, knownMeta, markRemoved, mergeScan, restoreRemoved, updateSaved, type SavedLibrary, type Source,
 } from './library';
 import {
-  createSet, currentSet, deleteSet, renameSet, setCurrent, type PreviewSet, type SavedSets,
+  createSet, currentSet, deleteSet, duplicateSet, renameSet, setCurrent, type PreviewSet, type SavedSets,
 } from './sets';
 import { scanSources } from './tauri-io';
 
@@ -109,6 +109,13 @@ export class LibraryService {
   createSet(name?: string): PreviewSet {
     const s = createSet(this.data, name);
     this.persist();
+    return s;
+  }
+
+  /** 复制预览集（不切换过去）；找不到返回 null */
+  duplicateSet(id: string): PreviewSet | null {
+    const s = duplicateSet(this.data, id);
+    if (s) this.persist();
     return s;
   }
 

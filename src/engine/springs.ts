@@ -39,6 +39,7 @@ export function stepMotion(m: Motion, dtRaw: number, o: StepOptions): StepResult
   const kp = o.axis === 'x' ? spring.follow : o.feel;
   const kz: Spring = o.axis === 'y' ? spring.follow : [o.feel[0] * 0.85, o.feel[1]];
   const [kPress, cPress] = spring.press;
+  const [kFz, cFz] = spring.fsZoom;
   // 纵向拖动时放大程度跟着手指走（向上拖放大），用跟手弹簧
   const [kMag, cMag] = o.axis === 'y' ? spring.follow : (o.magSpring ?? spring.magnify);
   const pt = o.axis ? 1 : 0;
@@ -60,6 +61,16 @@ export function stepMotion(m: Motion, dtRaw: number, o: StepOptions): StepResult
     a = -kz[0] * (m.pg - 1) - kz[1] * m.pgV;
     m.pgV += a * h;
     m.pg += m.pgV * h;
+    // 全屏缩放：缩放和平移用同一个临界阻尼弹簧，光标下的那一点在整个过渡里保持不动
+    a = -kFz * (m.fz - m.fzT) - cFz * m.fzV;
+    m.fzV += a * h;
+    m.fz += m.fzV * h;
+    a = -kFz * (m.fpx - m.fpxT) - cFz * m.fpxV;
+    m.fpxV += a * h;
+    m.fpx += m.fpxV * h;
+    a = -kFz * (m.fpy - m.fpyT) - cFz * m.fpyV;
+    m.fpyV += a * h;
+    m.fpy += m.fpyV * h;
     a = -kPress * (m.press - pt) - cPress * m.pressV;
     m.pressV += a * h;
     m.press += m.pressV * h;
@@ -86,11 +97,20 @@ export function stepMotion(m: Motion, dtRaw: number, o: StepOptions): StepResult
     Math.abs(m.mag - m.magT) < 1e-4 && Math.abs(m.magV) < 1e-3 &&
     Math.abs(m.fs - m.fsT) < 1e-4 && Math.abs(m.fsV) < 1e-3 &&
     Math.abs(m.pg - 1) < 1e-4 && Math.abs(m.pgV) < 1e-3 &&
+    Math.abs(m.fz - m.fzT) < 1e-4 && Math.abs(m.fzV) < 1e-3 &&
+    Math.abs(m.fpx - m.fpxT) < 0.05 && Math.abs(m.fpxV) < 0.5 &&
+    Math.abs(m.fpy - m.fpyT) < 0.05 && Math.abs(m.fpyV) < 0.5 &&
     m.mot < 0.002;
   if (settled) {
     m.mot = 0;
     m.pg = 1;
     m.pgV = 0;
+    m.fz = m.fzT;
+    m.fzV = 0;
+    m.fpx = m.fpxT;
+    m.fpxV = 0;
+    m.fpy = m.fpyT;
+    m.fpyV = 0;
     m.mag = m.magT;
     m.magV = 0;
     m.fs = m.fsT;

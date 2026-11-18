@@ -90,6 +90,25 @@ export function createSet(s: SavedSets, name?: string, makeId: () => string = ne
   return set;
 }
 
+/**
+ * 复制预览集（2026-11-18，右键预览集 → 创建副本）：作品、标题、系列、来源原样复制一份，
+ * 名字是「xxx 副本」（重名时加序号），放在原来那个的后面，不切换过去。找不到返回 null
+ */
+export function duplicateSet(s: SavedSets, id: string, makeId: () => string = newSetId): PreviewSet | null {
+  const i = s.sets.findIndex((x) => x.id === id);
+  if (i < 0) return null;
+  const src = s.sets[i];
+  const copy: PreviewSet = {
+    id: makeId(),
+    name: uniqueSetName(s, t('sets.copyName', { name: src.name })),
+    createdAt: Date.now(),
+    count: src.count,
+    library: structuredClone(src.library),
+  };
+  s.sets.splice(i + 1, 0, copy);
+  return copy;
+}
+
 /** 改名：去掉首尾空白；空名字不改，返回是否改了 */
 export function renameSet(s: SavedSets, id: string, name: string): boolean {
   const set = s.sets.find((x) => x.id === id);

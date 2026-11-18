@@ -116,6 +116,51 @@ export function deleteSeries(lib: Library, seriesId: string, withWorks: boolean)
   return removed;
 }
 
+// ───────────── 编辑卡的快照：取消时恢复、判断有没有改动（2026-11-17） ─────────────
+
+/** 编辑卡打开时的系列列表（名字、颜色）和每幅作品的归属 / 自定义标题 */
+export interface EditSnapshot {
+  series: Series[];
+  works: Map<string, { series: string; customTitle?: string }>;
+}
+
+export function snapshotEdit(lib: Library): EditSnapshot {
+  return {
+    series: lib.series.map((s) => ({ ...s })),
+    works: new Map(lib.works.map((w) => [w.id, { series: w.series, customTitle: w.customTitle }])),
+  };
+}
+
+/** 恢复到快照（取消编辑） */
+export function restoreEdit(lib: Library, snap: EditSnapshot): void {
+  lib.series = snap.series.map((s) => ({ ...s }));
+  for (const w of lib.works) {
+    const s = snap.works.get(w.id);
+    if (!s) continue;
+    w.series = s.series;
+    if (s.customTitle) w.customTitle = s.customTitle;
+    else delete w.customTitle;
+  }
+}
+
+/**
+ * 和快照比有没有改动（编辑卡的“取消”按钮据此可不可点）。
+ * 改了又改回原样（比如打字再删掉）算没改动；空的自定义标题和没有自定义标题一样。
+ */
+export function editChanged(snap: EditSnapshot, lib: Library): boolean {
+  if (snap.series.length !== lib.series.length) return true;
+  for (let i = 0; i < lib.series.length; i++) {
+    const a = snap.series[i], b = lib.series[i];
+    if (a.id !== b.id || a.name !== b.name || a.color !== b.color) return true;
+  }
+  for (const w of lib.works) {
+    const s = snap.works.get(w.id);
+    if (!s) continue;
+    if (s.series !== w.series || (s.customTitle ?? '') !== (w.customTitle ?? '')) return true;
+  }
+  return false;
+}
+
 export function newSeriesId(): string {
   return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }

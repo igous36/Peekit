@@ -7,11 +7,19 @@
 import type { Motion } from './engine/motion';
 import { stepMotion, type Axis, type Spring } from './engine/springs';
 import {
-  CLICK_GUARD_MS, cameraLevel, dragLevel, dragPosition, levelTargets, lockAxis, magDragSpan, pushSample, releaseLevel,
-  releasePosition, stageUnit, type CameraLevel,
+  AXIS_LOCK_PX, CLICK_GUARD_MS, cameraLevel, dragLevel, dragPosition, levelTargets, lockAxis, magDragSpan, pushSample,
+  releaseLevel, releasePosition, stageUnit, type CameraLevel, fsPull, fsPreview, FS_PULL_ENTER,
   type Sample,
 } from './engine/gesture';
-import { cameraStep, keyAction, WheelAccumulator, type CameraTargets, type NavAction } from './engine/discrete';
+import {
+  FIT, RUBBER_RESET_MS, ZOOM_PER_PX, feedWheelGate, landWheelGate, maxZoom, newWheelGate, panBy, resetWheelGate,
+  rubberZoom, swallowAfterExit, wheelPx, zoomAt, type FsView, type FsWheelGate,
+} from './engine/fszoom';
+import {
+  cameraStep, DETENT_NUDGE, DETENT_RELEASE_MS, feedDetent, isWheelNotch, keyAction, landDetent, newDetent, WheelAccumulator,
+  wheelLanding,
+  type CameraDetent, type CameraTargets, type NavAction,
+} from './engine/discrete';
 import { clamp } from './engine/math';
 import { spring } from './tokens';
 
@@ -33,6 +41,12 @@ export interface ControllerHost {
   render(): void;
   /** 系统全屏的进入 / 退出（界面状态由 Motion.fsT 决定） */
   setFullscreen(on: boolean): void;
+  /** 全屏缩放用：当前作品适应屏幕时的大小（px）、原图宽度、屏幕像素比 */
+  fsBase(): { w: number; h: number; naturalW?: number; dpr: number };
+  /** 全屏缩放了一下：底部显示缩放倍率（停一会儿自动隐藏） */
+  zoomActivity(): void;
+  /** 已经在头 / 尾还往外翻（按键、滚轮、时间轴按钮）：左上角计数提示到头了（2026-11-18） */
+  edgeBump(): void;
 }
 
 interface DragState {
@@ -44,6 +58,8 @@ interface DragState {
   l0: number;
   /** 按下前停在的那一档 */
   from: CameraLevel;
+  /** 放大时继续往上拖：拖过放大那一档多少（2026-11-18，进全屏用） */
+  pull?: number;
   axis: Axis | null;
   el: HTMLElement;
   samples: Sample[];
@@ -53,6 +69,8 @@ interface DragState {
   exitMag: boolean;
   /** 按下时正在放大查看 / 全屏：拖动换算按窗口宽度，一次最多切一幅 */
   mag: boolean;
+  /** 全屏且放大了：这次拖动用来平移画面（不切换作品、不退出全屏） */
+  pan: { px0: number; py0: number; moving: boolean } | null;
 }
 
 /** 落位手感，原型 Tweaks 里的“动效 · 手感”，默认标准 */
@@ -141,7 +159,8 @@ export class Controller {
       dragging: this.drag !== null || this.scrubbing,
       feel: reduced ? spring.reducedMotion : FEELS[this.feel],
       navMove: this.navMove,
-      avoidGlass: !reduced,
+      // 放大 / 全屏时只看得到一幅：左右切换不触发玻璃避让（2026-11-18）
+      avoidGlass: !reduced && !this.magnified,
       magSpring: reduced ? spring.reducedMotion : spring.magnify,
     });
     this.navMove = r.navMove;
@@ -169,9 +188,88 @@ export class Controller {
     this.m.zoomT = t.zoomT;
     this.m.magT = t.magT;
     this.m.fsT = t.fsT;
-    if (wasFull !== t.fsT > 0.5) this.host.setFullscreen(t.fsT > 0.5);
+    if (wasFull !== t.fsT > 0.5) {
+      // 进出全屏：滚轮缩放回到适应屏幕
+      this.resetFsView();
+      this.host.setFullscreen(t.fsT > 0.5);
+    }
     this.touch();
     this.kick();
+  }
+
+  // ───────────── 全屏时的滚轮缩放（2026-11-18，规则见 engine/fszoom.ts） ─────────────
+
+  /** 滚轮手势状态：橡皮筋累计、是否刚从放大缩回适应屏幕（见 engine/fszoom.ts） */
+  private gate: FsWheelGate = newWheelGate();
+  private fsUnderTimer = 0;
+  /** 滚轮进出全屏的时间、上一个滚轮事件的时间：进出全屏后同一次滚动剩下的事件吞掉 */
+  private wheelSwallowAt = 0;
+  private lastWheelAt = 0;
+  /** 单幅卡位（滚轮从放大 / 系列视图滚回单幅后，见 engine/discrete.ts） */
+  private detent: CameraDetent = newDetent();
+  private nudgeTimer = 0;
+
+  /** 全屏缩放的目标视图 */
+  private setFsView(v: FsView): void {
+    this.m.fzT = v.z;
+    this.m.fpxT = v.px;
+    this.m.fpyT = v.py;
+  }
+
+  /** 立刻回到适应屏幕（换作品、进出全屏时），不做动画 */
+  resetFsView(): void {
+    const m = this.m;
+    m.fz = m.fzT = 1;
+    m.fpx = m.fpxT = 0;
+    m.fpy = m.fpyT = 0;
+    m.fzV = m.fpxV = m.fpyV = 0;
+    resetWheelGate(this.gate);
+    window.clearTimeout(this.fsUnderTimer);
+  }
+
+  /** 全屏且放大了（拖动用来平移，原图要加载） */
+  get fsZoomed(): boolean {
+    return this.fullscreen && this.m.fzT > 1.01;
+  }
+
+  /**
+   * 全屏时的竖向滚轮：以光标为中心缩放。已经是适应屏幕时往下滚：先缩一点点（橡皮筋），
+   * 继续往下（累计超过 EXIT_UNDER）就退出全屏；停下一会儿橡皮筋弹回。
+   * 刚从放大缩回适应屏幕时，这次滚动剩下的往下滚（最长 0.5 秒）只有橡皮筋、不会退出（规则见 engine/fszoom.ts）
+   */
+  private fsWheel(e: WheelEvent, now: number): void {
+    const m = this.m;
+    const b = this.host.fsBase();
+    const dy = wheelPx(e.deltaY, e.deltaMode, this.vh);
+    const view: FsView = { z: m.fzT, px: m.fpxT, py: m.fpyT };
+    window.clearTimeout(this.fsUnderTimer);
+    this.touch();
+    const act = feedWheelGate(this.gate, dy, now, view.z);
+    if (act === 'exit') {
+      // 继续往下：退出全屏（回到单幅）；这次滚动剩下的事件吞掉，不会接着拉到系列视图
+      this.wheelSwallowAt = now;
+      this.wheel.reset();
+      this.magnify(false);
+      return;
+    }
+    if (act === 'zoom') {
+      // 放大，或者还没缩回适应屏幕：缩放到光标所在的点（最小到适应屏幕）
+      const zMax = maxZoom(b.w, b.naturalW, b.dpr);
+      const next = zoomAt(view, Math.exp(-dy * ZOOM_PER_PX), e.clientX, e.clientY, b.w, b.h, this.vw, this.vh, zMax);
+      // 这一下从放大状态缩回了适应屏幕：接下来一小段时间往下滚只有橡皮筋（吸收快速一划的惯性）
+      if (dy > 0 && view.z > 1.0001 && next.z <= 1.0001) landWheelGate(this.gate, now);
+      this.setFsView(next);
+    } else {
+      this.setFsView({ z: rubberZoom(this.gate.under), px: 0, py: 0 });
+    }
+    this.host.zoomActivity();
+    this.fsUnderTimer = window.setTimeout(() => {
+      resetWheelGate(this.gate);
+      if (this.m.fzT < 1) {
+        this.setFsView(FIT);
+        this.kick();
+      }
+    }, RUBBER_RESET_MS);
   }
 
   magnify(on: boolean): void {
@@ -207,6 +305,7 @@ export class Controller {
       peeked: false,
       exitMag: false,
       mag: this.magnified,
+      pan: this.fsZoomed ? { px0: m.fpxT, py0: m.fpyT, moving: false } : null,
     };
     this.drag = d;
     // 按住不动 0.35s：放大查看（松开后保持，单击 / 滚轮下滑 / Esc 恢复）
@@ -234,6 +333,27 @@ export class Controller {
       m.oy = m.oyT;
     }
     const d = this.drag;
+    if (d && d.id === e.pointerId && d.pan) {
+      // 全屏且放大了：拖动平移画面（跟手：当前值和目标一起改），不切换作品、不退出全屏
+      const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+      if (!d.pan.moving) {
+        if (Math.hypot(dx, dy) < AXIS_LOCK_PX) return;
+        d.pan.moving = true;
+        try {
+          d.el.setPointerCapture(e.pointerId);
+        } catch {
+          /* 忽略 */
+        }
+        this.host.ui.axis = 'x'; // 光标变成“抓着”
+      }
+      const b = this.host.fsBase();
+      const v = panBy({ z: m.fzT, px: d.pan.px0, py: d.pan.py0 }, dx, dy, b.w, b.h, this.vw, this.vh);
+      m.fpx = m.fpxT = v.px;
+      m.fpy = m.fpyT = v.py;
+      m.fpxV = m.fpyV = 0;
+      this.kick();
+      return;
+    }
     if (d && d.id === e.pointerId) {
       const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
       if (!d.axis) {
@@ -267,6 +387,11 @@ export class Controller {
         const t = levelTargets(dragLevel(d.l0, dy, this.vh));
         m.zoomT = t.zoomT;
         m.magT = t.magT;
+        // 按下时就在放大：继续往上拖，画面往全屏方向走（预览，不会真切到系统全屏）；从单幅出发的这次最多到放大
+        if (d.from === -1) {
+          d.pull = fsPull(d.l0, dy, this.vh);
+          m.fsT = fsPreview(d.pull);
+        }
       }
       pushSample(d.samples, { t: performance.now(), p: m.posT, z: cameraLevel(m.zoomT, m.magT) });
     }
@@ -279,14 +404,28 @@ export class Controller {
     window.clearTimeout(this.pressTimer);
     this.drag = null;
     const m = this.m, n = this.host.workCount();
+    if (d.pan) {
+      // 平移结束：拖过的不算单击
+      if (d.pan.moving) {
+        this.dragEndAt = performance.now();
+        this.host.ui.axis = null;
+      }
+      this.kick();
+      return;
+    }
     if (d.axis === 'x') {
       m.posT = releasePosition(d.samples, m.posT, n, d.mag ? Math.round(d.p0) : undefined);
       this.dragEndAt = performance.now();
     } else if (d.axis === 'y') {
       if (!d.exitMag) {
-        // 吸附到最近的一档：系列视图 / 单幅 / 放大查看
-        const to = releaseLevel(d.samples, cameraLevel(m.zoomT, m.magT), d.from);
-        this.setCamera({ zoomT: to === 1 ? 1 : 0, magT: to === -1 ? 1 : 0, fsT: 0 });
+        if (d.from === -1 && (d.pull ?? 0) >= FS_PULL_ENTER) {
+          // 放大时往上拉过门槛：进全屏（2026-11-18）
+          this.setCamera({ zoomT: 0, magT: 1, fsT: 1 });
+        } else {
+          // 吸附到最近的一档：系列视图 / 单幅 / 放大查看（拉全屏没过门槛就弹回放大）
+          const to = releaseLevel(d.samples, cameraLevel(m.zoomT, m.magT), d.from);
+          this.setCamera({ zoomT: to === 1 ? 1 : 0, magT: to === -1 ? 1 : 0, fsT: 0 });
+        }
       }
       this.dragEndAt = performance.now();
     } else {
@@ -339,10 +478,70 @@ export class Controller {
   // ───────────── 触控板 / 滚轮、方向键 ─────────────
 
   private onWheel = (e: WheelEvent): void => {
-    const a = this.wheel.feed(e.deltaX, e.deltaY, performance.now());
-    if (a) this.apply(a);
+    const now = performance.now();
+    const last = this.lastWheelAt;
+    this.lastWheelAt = now;
+    // 刚用滚轮退出 / 进入全屏：同一次滚动剩下的事件吞掉（退出后不会顺势拉到系列视图，进入后不会接着放大画面）；停顿过一次就不再吞
+    const after = swallowAfterExit(this.wheelSwallowAt, last, now);
+    this.wheelSwallowAt = after.exitedAt;
+    if (after.swallow) return;
+    // 全屏时竖向滚轮用来缩放（横向滚动照常切换作品）
+    if (this.fullscreen && e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+      this.fsWheel(e, now);
+      this.kick();
+      return;
+    }
+    // 鼠标滚轮的一格立刻推拉一级；触控板照旧累计 + 冷却
+    const notch = isWheelNotch(e.deltaMode, (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY);
+    // 单幅卡位：刚滚回单幅，这次滚动里同方向再滚只顶一下，不冲到另一头（规则见 engine/discrete.ts）
+    const vertical = e.deltaY !== 0 && Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+    if (vertical && feedDetent(this.detent, e.deltaY, now, notch)) {
+      this.wheel.reset();
+      this.nudgeDetent(Math.sign(e.deltaY));
+      this.kick();
+      return;
+    }
+    const a = this.wheel.feed(e.deltaX, e.deltaY, now, notch);
+    if (a) {
+      const from = this.targets();
+      this.apply(a);
+      // 防冲过头（2026-11-18 起放大再往上是全屏）：落到单幅、往上落到放大是卡位；进了全屏吞掉这次滚动剩下的
+      if (a.kind === 'in' || a.kind === 'out') {
+        const land = wheelLanding(from, this.targets(), a.kind);
+        if (land === 'detent') {
+          landDetent(this.detent, a.kind === 'out' ? 1 : -1, now);
+        } else if (land === 'swallow') {
+          this.wheelSwallowAt = now;
+          this.wheel.reset();
+        }
+      }
+    }
     this.kick();
   };
+
+  /**
+   * 卡位顶一下：镜头往 dir 那边动一点点，停下 DETENT_RELEASE_MS 后弹回。
+   * 在单幅：往下顶向系列视图、往上顶向放大；在放大：往上顶向全屏（全屏底色、画面都只动一点点，不会真进全屏）
+   */
+  private nudgeDetent(dir: number): void {
+    const m = this.m;
+    if (m.magT > 0.5 && m.fsT < 0.5) {
+      if (dir < 0) m.fsT = DETENT_NUDGE;
+    } else if (dir > 0) {
+      m.zoomT = DETENT_NUDGE;
+    } else {
+      m.magT = DETENT_NUDGE;
+    }
+    this.touch();
+    window.clearTimeout(this.nudgeTimer);
+    this.nudgeTimer = window.setTimeout(() => {
+      // 期间别的操作改了镜头就不动它
+      if (m.zoomT === DETENT_NUDGE) m.zoomT = 0;
+      if (m.magT === DETENT_NUDGE) m.magT = 0;
+      if (m.fsT === DETENT_NUDGE) m.fsT = 0;
+      this.kick();
+    }, DETENT_RELEASE_MS);
+  }
 
   private onKey = (e: KeyboardEvent): void => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
@@ -355,7 +554,9 @@ export class Controller {
   private apply(a: NavAction): void {
     const m = this.m, n = this.host.workCount();
     if (a.kind === 'step') {
-      m.posT = clamp(Math.round(m.posT) + a.delta, 0, n - 1);
+      const from = Math.round(m.posT);
+      m.posT = clamp(from + a.delta, 0, n - 1);
+      if (n > 0 && m.posT === from) this.host.edgeBump();
       this.navMove = true;
       this.touch();
       this.kick();
@@ -380,11 +581,15 @@ export class Controller {
   };
 
   prev = (): void => {
-    this.go(Math.max(0, Math.round(this.m.posT) - 1));
+    const i = Math.round(this.m.posT);
+    if (i <= 0) this.host.edgeBump();
+    this.go(Math.max(0, i - 1));
   };
 
   next = (): void => {
-    this.go(Math.min(this.host.workCount() - 1, Math.round(this.m.posT) + 1));
+    const i = Math.round(this.m.posT), n = this.host.workCount();
+    if (i >= n - 1) this.host.edgeBump();
+    this.go(Math.min(n - 1, i + 1));
   };
 
   /** 当前目标作品（编辑系列时用 posT，而不是正在动的 pos） */

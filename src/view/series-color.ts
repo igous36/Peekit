@@ -2,17 +2,17 @@
 //
 //   系列颜色  ● 夏日
 //        ╭── 色相环 ──╮       拖旋钮（或在环上点）选色相，圆盘实时预览
-//        │  ( 圆盘 )  │       点常用色：颜色从那个方向“倒进”圆盘，旋钮带回弹转过去
+//        │  ( 圆盘 )  │       点预设色：颜色从那个方向“倒进”圆盘，旋钮带回弹转过去
 //        ╰────────────╯
 //          #C27F4B            可以直接输入色值
 //   浓淡 ━━━━━●━━━━━          只在低饱和范围里取（12–60%），明暗 36–72%，和现有系列色一个调子
 //   明暗 ━━━━●━━━━━━
-//   常用色
+//   预设色
 //   ● ● ● ● ● ●              选中圈带回弹地滑到选中的那个
 //   ● ● ● ● ● ●
 //               [取消] [完成]
 //
-// 打开时色相环转着展开、常用色依次弹出。拖动时整个界面里这个系列的圆点实时变色（preview），
+// 打开时色相环转着展开、预设色依次弹出。拖动时整个界面里这个系列的圆点实时变色（preview），
 // 点“完成”才保存；取消 / Esc / 点外面恢复原来的颜色。减少动态效果时去掉这些动画。
 import { t, type MessageKey } from '../i18n';
 import { seriesPresets } from '../tokens';
@@ -112,7 +112,7 @@ export class ColorPicker {
     const slider = (key: MessageKey, input: HTMLInputElement) =>
       el('label', { class: 'cp-slider' }, [el('span', { 'data-i18n': key }), input]);
 
-    // ── 常用色 ──
+    // ── 预设色 ──
     this.sel = el('span', { class: 'cp-sel', 'aria-hidden': 'true' });
     this.grid = el('div', { class: 'cp-swatches', role: 'group', 'data-i18n-aria': 'color.presets' }, [this.sel]);
     seriesPresets.forEach((p, i) => {
@@ -171,7 +171,7 @@ export class ColorPicker {
 
   // ───────────── 取色 ─────────────
 
-  /** 从色值取色（常用色、输入、打开时） */
+  /** 从色值取色（预设色、输入、打开时） */
   private setHex(hex: string, source: Source, origin?: { x: number; y: number }): void {
     const n = normalizeHex(hex);
     if (!n) return;
@@ -202,7 +202,7 @@ export class ColorPicker {
 
   /** 把当前状态画出来：圆盘、旋钮、滑条、色值、选中圈，并通知预览 */
   private apply(source: Source, origin?: { x: number; y: number }): void {
-    // 色相环和滑条只在低饱和范围里取色；常用色和输入的色值原样保留
+    // 色相环和滑条只在低饱和范围里取色；预设色和输入的色值原样保留
     if (source === 'ring' || source === 'slider') this.hex = hslToHex(clampMuted({ h: this.h, s: this.s, l: this.l }));
     const hex = this.hex;
     const animated = source === 'preset' || source === 'hex';
@@ -210,7 +210,7 @@ export class ColorPicker {
     if (animated) this.pour(hex, origin);
     else this.setDisc(hex);
 
-    // 旋钮：常用色 / 输入时带回弹地转过去，拖动时直接跟手
+    // 旋钮：预设色 / 输入时带回弹地转过去，拖动时直接跟手
     this.angle = source === 'init' ? this.h : nearestAngle(this.angle, this.h);
     this.arm.classList.toggle('is-spring', animated);
     this.arm.style.transform = `rotate(${this.angle.toFixed(2)}deg)`;
@@ -234,9 +234,23 @@ export class ColorPicker {
       this.ink$.anim.onfinish = null;
       this.ink$.anim.cancel();
       this.ink$ = null;
+      // 倒到一半被打断：圆盘直接换色再收起墨水层（否则圆盘从倒之前的颜色过渡，旧颜色会闪一下）
+      this.snapDisc(hex);
       this.ink.style.visibility = 'hidden';
+      return;
     }
     this.disc.style.background = hex;
+  }
+
+  /**
+   * 圆盘直接换成 hex，不走 CSS 的颜色过渡（2026-11-18 修复：倒满后收起墨水层时，
+   * 圆盘底色要从旧颜色过渡 100ms，墨水层一收旧颜色就闪一下）
+   */
+  private snapDisc(hex: string): void {
+    this.disc.style.transition = 'none';
+    this.disc.style.background = hex;
+    void this.disc.offsetWidth; // 先按“无过渡”生效，再恢复过渡
+    this.disc.style.transition = '';
   }
 
   /** 新颜色从 origin 的方向“倒进”圆盘（圆形裁切从圆盘边上那一点长满） */
@@ -244,7 +258,7 @@ export class ColorPicker {
     // 上一次还没倒满：直接把它倒满，再开始这一次
     if (this.ink$) this.setDisc(this.ink$.hex);
     if (reducedMotion.matches || typeof this.ink.animate !== 'function') {
-      this.setDisc(hex);
+      this.snapDisc(hex);
       return;
     }
     let ox = 50, oy = 50;
@@ -265,12 +279,12 @@ export class ColorPicker {
     anim.onfinish = () => {
       if (this.ink$?.anim !== anim) return;
       this.ink$ = null;
-      this.disc.style.background = hex;
+      this.snapDisc(hex);
       this.ink.style.visibility = 'hidden';
     };
   }
 
-  /** 常用色的选中圈：滑到选中的那个（带回弹）；当前颜色不是常用色就淡出 */
+  /** 预设色的选中圈：滑到选中的那个（带回弹）；当前颜色不是预设色就淡出 */
   private moveSelection(instant: boolean): void {
     const i = seriesPresets.findIndex((p) => p.hex === this.hex);
     this.swatches.forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));

@@ -4,7 +4,9 @@
 // 2026-11-17 修改：
 // - 编辑态里不再有“移出这幅 / 删除系列”按钮，改成右键作品 / 系列（见 context-menu.ts）
 // - “「xxx」归入系列”改成“所属系列”；系列多于 3 个时默认收起：显示前 3 个，第 4 个磨砂渐隐，
-//   下面的 ⌄ 展开全部（再点 ⌃ 收起）
+//   下面的 ⌄ 展开全部（再点 ⌃ 收起）；收起时点前 3 个系列（照常归入）也会展开；
+//   在系列标签上（标签本身和它们之间的缝、⌄ 按钮）滚滚轮：往下展开、往上收起；其余地方照常滚动编辑卡
+// - “完成”旁边加“取消”：没有改动时不可点，有改动时点了放弃修改并关闭
 // - 点卡片外面、按 Esc：放弃这次的修改并关闭（恢复到打开编辑卡之前）；“完成”、回车：保存
 // - 右键系列芯片：弹出删除系列的菜单
 import type { Series, Work } from '../data/types';
@@ -17,6 +19,8 @@ import { menuPoint } from './context-menu';
 
 /** 系列多于这么多个时收起 */
 export const SERIES_COLLAPSED_MAX = 3;
+/** 滚轮判定时标签四周放宽的距离（px）：标签之间的缝是 8px，各放宽一半正好连上 */
+const TAG_HIT_PAD = 4;
 /** 展开 / 收起的高度过渡（ms），和 CSS 一致 */
 const EXPAND_MS = 260;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -33,6 +37,8 @@ export interface EditFrame {
   work: Work;
   series: Series;
   chips: ChipData[];
+  /** 和打开时比有改动：“取消”按钮才可点 */
+  dirty: boolean;
 }
 
 export interface InfoFrame {
@@ -118,6 +124,7 @@ export class InfoPanel {
   private chipRow: HTMLElement;
   private newBtn: HTMLButtonElement;
   private toggleBtn: HTMLButtonElement;
+  private cancelBtn: HTMLButtonElement;
   private chips = new Map<string, Chip>();
   private chipOrder: string[] = [];
   private editing = false;
@@ -190,16 +197,37 @@ export class InfoPanel {
     this.toggleBtn.addEventListener('click', () => this.setExpanded(!this.expanded));
     const done = el('button', { type: 'button', class: 'editor-done', 'data-i18n': 'editor.done' });
     done.addEventListener('click', finish);
+    // “取消”：放弃这次的修改并关闭（2026-11-17 新增）；没有改动时不可点
+    this.cancelBtn = el('button', { type: 'button', class: 'editor-cancel', 'data-i18n': 'editor.cancel', disabled: true });
+    this.cancelBtn.addEventListener('click', cancel);
+
+    // “所属系列”一栏：标题、芯片、底下一行（+ 新建系列、⌄ 展开）
+    const seriesSection = el('div', { class: 'series-section' }, [
+      el('p', { class: 'editor-caption editor-pick', 'data-i18n': 'editor.seriesCaption' }),
+      this.chipWrap,
+      el('div', { class: 'series-foot' }, [this.newBtn, this.toggleBtn]),
+    ]);
+    // 在系列标签上滚滚轮（2026-11-17 用户要求，同日收窄范围）：往下展开、往上收起，这时不滚动编辑卡。
+    // 范围只算标签本身（连同标签之间 8px 的缝）和 ⌄ 按钮；“所属系列”标题、“+ 新建系列”、
+    // 一行标签右边的空白处都照常滚动编辑卡。系列不多于 3 个（不用收起）时照常滚动
+    seriesSection.addEventListener(
+      'wheel',
+      (e) => {
+        if (!this.collapsible() || !this.overTags(e.clientX, e.clientY)) return;
+        e.preventDefault();
+        if (e.deltaY > 0 && !this.expanded) this.setExpanded(true);
+        else if (e.deltaY < 0 && this.expanded) this.setExpanded(false);
+      },
+      { passive: false },
+    );
 
     this.editBlock = el('div', { class: 'info-editor', hidden: true }, [
       el('label', { class: 'editor-caption editor-label', for: 'work-title', 'data-i18n': 'editor.title' }),
       this.titleInput,
       el('label', { class: 'editor-caption editor-label editor-label--gap', for: 'series-name', 'data-i18n': 'editor.series' }),
       this.seriesInput,
-      el('p', { class: 'editor-caption editor-pick', 'data-i18n': 'editor.seriesCaption' }),
-      this.chipWrap,
-      el('div', { class: 'series-foot' }, [this.newBtn, this.toggleBtn]),
-      done,
+      seriesSection,
+      el('div', { class: 'editor-actions' }, [this.cancelBtn, done]),
     ]);
     // 焦点在芯片、按钮上时按 Esc 也是放弃
     this.editBlock.addEventListener('keydown', (e) => {
@@ -311,6 +339,7 @@ export class InfoPanel {
       this.chipRow.replaceChildren(...ids.map((id) => this.chips.get(id)!.btn.el));
     }
     this.applyCollapse();
+    if (this.cancelBtn.disabled === e.dirty) this.cancelBtn.disabled = !e.dirty;
   }
 
   /**
@@ -341,17 +370,42 @@ export class InfoPanel {
     this.toggleBtn.title = label;
   }
 
+  /** 系列多于 3 个，需要收起 / 展开 */
+  private collapsible(): boolean {
+    return this.chipOrder.length > SERIES_COLLAPSED_MAX;
+  }
+
+  /**
+   * 指针是否在系列标签上：任一看得见的标签（含磨砂的那个）或 ⌄ 按钮，四周各放宽 TAG_HIT_PAD，
+   * 正好盖住标签之间的缝，指针从一个标签移到下一个时不会在缝里“漏”成滚动编辑卡
+   */
+  private overTags(x: number, y: number): boolean {
+    const hit = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && x >= r.left - TAG_HIT_PAD && x <= r.right + TAG_HIT_PAD
+        && y >= r.top - TAG_HIT_PAD && y <= r.bottom + TAG_HIT_PAD;
+    };
+    if (!this.toggleBtn.hidden && hit(this.toggleBtn)) return true;
+    return this.chipOrder.some((id) => {
+      const b = this.chips.get(id)?.btn.el;
+      return !!b && !b.hidden && hit(b);
+    });
+  }
+
   /** 展开 / 收起：芯片区高度从旧值过渡到新值，新露出来的芯片淡入 */
   private setExpanded(v: boolean): void {
     if (v === this.expanded) return;
     const wrap = this.chipWrap;
-    const from = wrap.offsetHeight;
+    // 从当前看到的高度出发（上一次动画没走完时就是动画中途的高度）
+    const from = wrap.getBoundingClientRect().height;
+    window.clearTimeout(this.expandTimer);
+    wrap.classList.remove('is-animating', 'is-opening', 'is-closing');
     this.expanded = v;
     this.applyCollapse();
+    // 量新高度前先去掉上一次动画写的行内高度，否则量到的是旧值（来回快速滚动时会卡在展开的高度）
+    wrap.style.height = '';
     if (reducedMotion.matches) return;
-    window.clearTimeout(this.expandTimer);
     const to = wrap.offsetHeight;
-    wrap.classList.remove('is-animating');
     wrap.style.height = `${from}px`;
     void wrap.offsetWidth;
     wrap.classList.add('is-animating', v ? 'is-opening' : 'is-closing');
@@ -368,8 +422,13 @@ export class InfoPanel {
     const btn = el('button', { type: 'button', class: 'series-chip', 'aria-pressed': 'false' }, [dot, name]);
     btn.addEventListener('click', () => {
       // 收起时第 4 个（磨砂的那个）只用来展开
-      if (btn.classList.contains('is-peek')) this.setExpanded(true);
-      else this.handlers.pick?.(id);
+      if (btn.classList.contains('is-peek')) {
+        this.setExpanded(true);
+        return;
+      }
+      this.handlers.pick?.(id);
+      // 收起时点前 3 个系列：归入这个系列，同时展开剩下的（2026-11-17 用户要求）
+      if (!this.expanded && this.collapsible()) this.setExpanded(true);
     });
     btn.addEventListener('contextmenu', (e) => {
       e.preventDefault();

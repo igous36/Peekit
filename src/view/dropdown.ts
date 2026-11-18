@@ -2,6 +2,9 @@
 // 左上角菜单和预览集切换器共用；同一时间只开一个。
 const all = new Set<Dropdown>();
 
+/** 在右键菜单里（右键菜单单独挂在界面最外层，不在下拉面板里） */
+const inCtxMenu = (t: EventTarget | null): boolean => t instanceof Element && !!t.closest('.ctx-menu');
+
 export class Dropdown {
   isOpen = false;
 
@@ -27,12 +30,15 @@ export class Dropdown {
     document.addEventListener(
       'pointerdown',
       (e) => {
-        if (this.isOpen && !this.root.contains(e.target as Node)) this.close(false);
+        // 右键菜单（比如右键预览集）里的点击不算点外面（2026-11-18）
+        if (this.isOpen && !this.root.contains(e.target as Node) && !inCtxMenu(e.target)) this.close(false);
       },
       true,
     );
     root.addEventListener('focusout', (e) => {
-      if (this.isOpen && e.relatedTarget && !this.root.contains(e.relatedTarget as Node)) this.close(false);
+      if (this.isOpen && e.relatedTarget && !this.root.contains(e.relatedTarget as Node) && !inCtxMenu(e.relatedTarget)) {
+        this.close(false);
+      }
     });
   }
 
