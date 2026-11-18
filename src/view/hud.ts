@@ -3,6 +3,10 @@ import { r3 } from '../engine/math';
 import { t } from '../i18n';
 import { el, svgIcon, ICON_NEXT, ICON_PENCIL, ICON_PREV, Styled } from './dom';
 import { Counter } from './counter';
+import { wordmarkSvg } from './wordmark';
+
+/** 标题栏手写字标的高度（px）：和原来 15px 文字字标的视觉分量相当，小写字母约 10px 高 */
+const WORDMARK_HEIGHT = 26;
 
 export interface HudFrame {
   cur: number;
@@ -63,10 +67,11 @@ export class Hud {
     this.dragRegion = el('div', { class: 'drag-region', 'data-tauri-drag-region': true, 'aria-hidden': 'true' });
 
     // 字标一行：Peekit · 预览集胶囊（由 App 插到 slot 里）· 计数
+    // 2026-11-18：Peekit 从文字换成手写字标 SVG（view/wordmark.ts）
     this.counter = new Counter();
     this.setSlot = el('span', { class: 'wordmark-slot' });
     this.wordmark = el('div', { class: 'wordmark' }, [
-      el('span', { class: 'wordmark-name', 'data-i18n': 'app.name' }),
+      wordmarkSvg(WORDMARK_HEIGHT, 'wordmark-name'),
       this.setSlot,
       this.counter.root,
     ]);

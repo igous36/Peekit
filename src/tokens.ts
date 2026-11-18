@@ -192,7 +192,6 @@ export const font = {
   'font-family-sans': SANS,
   'font-family-mono': MONO,
   'font-title': `600 26px/1.2 ${SANS}`,
-  'font-wordmark': `600 15px/1.2 ${SANS}`,
   'font-series': `600 14px/1.2 ${SANS}`,
   'font-label': `500 13px/1.2 ${SANS}`,
   'font-body': `400 14px/1.7 ${SANS}`,

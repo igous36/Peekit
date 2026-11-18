@@ -322,9 +322,12 @@ button:focus-visible {
   max-width: 320px;
 }
 
+/* 手写字标（2026-11-18，view/wordmark.ts）：SVG 单线，颜色跟着 .wordmark 的文字色（currentColor）。
+   SVG 盒子里基线偏下（大写 P、k 的圈在上面），整行居中时手写字会比旁边的胶囊文字低，往上提一点对齐基线 */
 .wordmark-name {
-  font: var(--font-wordmark);
-  letter-spacing: 0.02em;
+  display: block;
+  flex-shrink: 0;
+  transform: translateY(-3px);
 }
 
 .wordmark-index {
