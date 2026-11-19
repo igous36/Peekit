@@ -18,6 +18,12 @@
 //     刷新                 F5  ← 重新扫描当前预览集导入过的文件夹 / 文件
 // - 右键预览集：修改名称 / 创建副本 / 删除预览集（改名、删除走原来那套原地输入框和确认）
 //
+// 2026-11-18：预览集下面是情绪板，格式和预览集一样：
+//     情绪板
+//     ✓ 灵感   12   ✎ 🗑      ← 点名字打开；✎ 原地改名；🗑 原地确认删除（只删情绪板，不删图片）
+//     + 新建情绪板
+//   右键情绪板：修改名称 / 创建副本 / 删除情绪板。两种列表共用 listRow
+//
 // 面板内容在每次打开 / 切换视图 / 改名删除后重建（用户操作时，不在每帧）。
 // 进出二级视图时有过渡（2026-11-17 新增）：旧内容滑出淡出、新内容从另一侧滑入，面板高度跟着过渡。
 import { LANGS, lang, langLocalName, LANG_NATIVE, langTag, setLang, t, type MessageKey } from '../i18n';
@@ -53,6 +59,16 @@ export type ImportKind = 'files' | 'folder';
 /** 菜单面板现在显示哪一页：主视图、“导入到…”二级视图、偏好设置（2026-11-18） */
 type MenuView = 'main' | ImportKind | 'prefs';
 
+/** 预览集 / 情绪板列表一行能做的事（两种列表共用一套行，见 listRow） */
+interface ListOps {
+  open: (id: string) => void;
+  rename: (id: string, name: string) => void;
+  remove: (id: string) => void;
+  duplicate: (id: string) => string | null;
+  /** 已经是当前的那一个：点了不用再打开（预览集）；情绪板每次都打开 */
+  skipCurrent: boolean;
+}
+
 export interface MenuHandlers {
   sets: () => SetInfo[];
   /** target：'new' = 导入到新建预览集；否则是现有预览集的 id */
@@ -71,6 +87,13 @@ export interface MenuHandlers {
   about: () => void;
   /** 下载并安装新版本（菜单顶上的“更新到 x.y.z”） */
   installUpdate: () => void;
+  /** 情绪板（2026-11-18）：列表（current = 正在看的那个）、打开、新建、改名、删除、复制 */
+  boards: () => SetInfo[];
+  openBoard: (id: string) => void;
+  newBoard: () => void;
+  renameBoard: (id: string, name: string) => void;
+  deleteBoard: (id: string) => void;
+  duplicateBoard: (id: string) => string | null;
 }
 
 export class AppMenu {
@@ -219,11 +242,19 @@ export class AppMenu {
       this.divider(),
       this.caption('sets.title'),
     );
-    for (const s of this.handlers.sets()) out.push(this.setRow(s));
+    for (const s of this.handlers.sets()) out.push(this.listRow(s, this.setOps));
     out.push(
       this.item(t('sets.new').replace(/^\+\s*/, ''), () => {
         this.dropdown.close(true);
         this.handlers.newSet();
+      }, { icon: ICON_PLUS, cls: 'menu-item--new' }),
+      this.divider(),
+      // 情绪板（2026-11-18）：和预览集同样的格式
+      this.caption('board.menu'),
+      ...this.handlers.boards().map((b) => this.listRow(b, this.boardOps)),
+      this.item(t('board.new'), () => {
+        this.dropdown.close(true);
+        this.handlers.newBoard();
       }, { icon: ICON_PLUS, cls: 'menu-item--new' }),
       this.divider(),
       // 偏好设置（2026-11-18）：二级视图，和“导入到…”一样滑进去
@@ -342,19 +373,35 @@ export class AppMenu {
   // ───────────── 预览集 ─────────────
 
   /** 右键预览集：修改名称 / 创建副本 / 删除预览集 */
-  private setMenu(s: SetInfo, e: MouseEvent, target: HTMLElement): void {
+  private setOps: ListOps = {
+    open: (id) => this.handlers.switchSet(id),
+    rename: (id, name) => this.handlers.renameSet(id, name),
+    remove: (id) => this.handlers.deleteSet(id),
+    duplicate: (id) => this.handlers.duplicateSet(id),
+    skipCurrent: true,
+  };
+
+  private boardOps: ListOps = {
+    open: (id) => this.handlers.openBoard(id),
+    rename: (id, name) => this.handlers.renameBoard(id, name),
+    remove: (id) => this.handlers.deleteBoard(id),
+    duplicate: (id) => this.handlers.duplicateBoard(id),
+    skipCurrent: false,
+  };
+
+  private listMenu(s: SetInfo, ops: ListOps, e: MouseEvent, target: HTMLElement): void {
     e.preventDefault();
     e.stopPropagation();
     const { x, y } = menuPoint(e, target);
     const items = setContextItems(s, {
       rename: () => this.beginRename(s.id),
       duplicate: () => {
-        const id = this.handlers.duplicateSet(s.id);
+        const id = ops.duplicate(s.id);
         this.rebuild();
         this.dropdown.focusItem((x) => x.dataset.set === id);
       },
       remove: () => this.beginDelete(s.id),
-    });
+    }, ops === this.boardOps ? t('board.delete') : undefined);
     this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));
   }
 
@@ -376,9 +423,33 @@ export class AppMenu {
     this.dropdown.focusItem((x) => x.dataset.cancel === id);
   }
 
-  private setRow(s: SetInfo): HTMLElement {
-    if (this.editing === s.id) return this.renameRow(s);
-    if (this.confirming === s.id) return this.confirmRow(s);
+  /** 列表里的一行：预览集和情绪板共用（点名字打开 / 切换，✎ 原地改名，🗑 原地确认删除，右键菜单） */
+  private listRow(s: SetInfo, ops: ListOps): HTMLElement {
+    if (this.editing === s.id) {
+      return setRenameRow(s, (commit, value) => {
+        if (commit) ops.rename(s.id, value);
+        this.editing = null;
+        this.rebuild();
+        this.dropdown.focusItem((x) => x.dataset.rename === s.id);
+      });
+    }
+    if (this.confirming === s.id) {
+      return setConfirmRow(
+        s,
+        () => {
+          this.confirming = null;
+          this.rebuild();
+          this.dropdown.focusItem((x) => x.dataset.delete === s.id);
+        },
+        () => {
+          this.confirming = null;
+          ops.remove(s.id);
+          this.rebuild();
+          this.dropdown.focusItem();
+        },
+        ops === this.boardOps ? { title: t('board.deleteConfirm', { name: s.name }), hint: t('board.deleteHint') } : {},
+      );
+    }
     const main = el('button', {
       type: 'button',
       class: 'menu-item menu-set-main',
@@ -393,7 +464,7 @@ export class AppMenu {
     ]);
     main.addEventListener('click', () => {
       this.dropdown.close(true);
-      if (!s.current) this.handlers.switchSet(s.id);
+      if (!s.current || !ops.skipCurrent) ops.open(s.id);
     });
     const rename = el('button', {
       type: 'button', class: 'menu-icon', role: 'menuitem', 'aria-label': t('sets.rename', { name: s.name }),
@@ -407,34 +478,8 @@ export class AppMenu {
     del.addEventListener('click', () => this.beginDelete(s.id));
     const row = el('div', { class: 'menu-set', role: 'none' }, [main, rename, del]);
     // 右键（或菜单键 / Shift+F10）整行都可以
-    row.addEventListener('contextmenu', (e) => this.setMenu(s, e, main));
+    row.addEventListener('contextmenu', (e) => this.listMenu(s, ops, e, main));
     return row;
-  }
-
-  private renameRow(s: SetInfo): HTMLElement {
-    return setRenameRow(s, (commit, value) => {
-      if (commit) this.handlers.renameSet(s.id, value);
-      this.editing = null;
-      this.rebuild();
-      this.dropdown.focusItem((x) => x.dataset.rename === s.id);
-    });
-  }
-
-  private confirmRow(s: SetInfo): HTMLElement {
-    return setConfirmRow(
-      s,
-      () => {
-        this.confirming = null;
-        this.rebuild();
-        this.dropdown.focusItem((x) => x.dataset.delete === s.id);
-      },
-      () => {
-        this.confirming = null;
-        this.handlers.deleteSet(s.id);
-        this.rebuild();
-        this.dropdown.focusItem();
-      },
-    );
   }
 
   // ───────────── 偏好设置（2026-11-18） ─────────────

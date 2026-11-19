@@ -18,6 +18,9 @@ export class RenamePopover {
   private input: HTMLInputElement;
   private done: HTMLButtonElement;
   private commit: ((name: string) => void) | null = null;
+  private cancelled: (() => void) | null = null;
+  private titleDefault: HTMLElement;
+  private titleCustom: HTMLElement;
 
   constructor() {
     this.dot = el('span', { class: 'dot' });
@@ -37,22 +40,41 @@ export class RenamePopover {
         this.finish();
       }
     });
+    this.titleDefault = el('span', { 'data-i18n': 'rename.title' });
+    this.titleCustom = el('span', { hidden: true });
     this.pop = new Popover('rename-pop', [
-      el('p', { class: 'pop-title' }, [el('span', { 'data-i18n': 'rename.title' }), this.dot]),
+      el('p', { class: 'pop-title' }, [this.titleDefault, this.titleCustom, this.dot]),
       this.input,
       el('div', { class: 'pop-actions' }, [cancel, this.done]),
     ]);
-    this.pop.onDismiss = () => (this.commit = null);
+    this.pop.onDismiss = () => {
+      const c = this.cancelled;
+      this.commit = null;
+      this.cancelled = null;
+      c?.();
+    };
     this.root = this.pop.root;
   }
 
-  open(series: { name: string; color: string }, x: number, y: number, commit: (name: string) => void): void {
+  /**
+   * opts.title：换掉“修改系列名称”（情绪板用，2026-11-18）；series.color 为空时不显示圆点；
+   * opts.cancel：取消（点外面、Esc、取消按钮）时调用
+   */
+  open(
+    series: { name: string; color: string }, x: number, y: number, commit: (name: string) => void,
+    opts: { title?: string; cancel?: () => void } = {},
+  ): void {
     this.pop.dismiss();
     this.commit = commit;
+    this.cancelled = opts.cancel ?? null;
+    this.titleDefault.hidden = !!opts.title;
+    this.titleCustom.hidden = !opts.title;
+    this.titleCustom.textContent = opts.title ?? '';
+    this.dot.hidden = !series.color;
     this.dot.style.background = series.color;
     this.input.value = series.name;
     this.done.disabled = !series.name.trim();
-    this.pop.show(x, y, t('rename.title'), this.input);
+    this.pop.show(x, y, opts.title ?? t('rename.title'), this.input);
     this.input.select();
   }
 
@@ -61,6 +83,7 @@ export class RenamePopover {
     if (!name) return;
     const c = this.commit;
     this.commit = null;
+    this.cancelled = null;
     c?.(name);
     this.pop.hide();
   }

@@ -124,3 +124,31 @@ export function stepMotion(m: Motion, dtRaw: number, o: StepOptions): StepResult
   }
   return { navMove, settled };
 }
+
+// ───────────── 单个标量弹簧（2026-11-18，情绪板和拖起阵列用） ─────────────
+
+/** v 当前值、t 目标、vel 速度 */
+export interface Scalar {
+  v: number;
+  t: number;
+  vel: number;
+}
+
+export const scalar = (v: number): Scalar => ({ v, t: v, vel: 0 });
+
+/** 推进 dt 秒（和 stepMotion 一样分 4 小步半隐式欧拉），返回是否已经静止；静止时吸附到目标 */
+export function stepScalar(s: Scalar, sp: Spring, dt: number, eps = 1e-3): boolean {
+  if (s.v === s.t && s.vel === 0) return true;
+  const h = clampDt(dt) / SUBSTEPS;
+  for (let i = 0; i < SUBSTEPS; i++) {
+    const a = -sp[0] * (s.v - s.t) - sp[1] * s.vel;
+    s.vel += a * h;
+    s.v += s.vel * h;
+  }
+  if (Math.abs(s.v - s.t) < eps && Math.abs(s.vel) < eps * 10) {
+    s.v = s.t;
+    s.vel = 0;
+    return true;
+  }
+  return false;
+}

@@ -16,11 +16,15 @@ export function scanSources(sources: Source[], known: Record<string, unknown>): 
   return invoke<ScanResult>('scan_sources', { sources, known });
 }
 
-export function makeThumbnail(path: string, mtime: number, size: number): Promise<{ path: string; color: string | null }> {
-  return invoke('make_thumbnail', { path, mtime, size });
+/** edge：不传是 1600 的缩略图；传 MINI_EDGE（384）是情绪板缩得很小时用的小缩略图（2026-11-19） */
+export function makeThumbnail(path: string, mtime: number, size: number, edge?: number): Promise<{ path: string; color: string | null }> {
+  return invoke('make_thumbnail', { path, mtime, size, edge });
 }
 
 /** 本地文件 → asset 协议 URL */
+/** 小缩略图的长边（和 Rust 端 thumbs.rs 的 MINI_EDGE 一致） */
+export const MINI_EDGE = 384;
+
 export const assetUrl = (path: string): string => convertFileSrc(path);
 
 /** 系统全屏：不管窗口是否最大化，都统一进入全屏；退出后恢复原来的窗口状态 */

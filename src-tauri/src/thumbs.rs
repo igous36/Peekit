@@ -10,6 +10,10 @@ use tauri::{AppHandle, Manager};
 
 pub const THUMB_EDGE: u32 = 1600;
 const WEBP_QUALITY: f32 = 82.0;
+/// 小缩略图（2026-11-19，情绪板压测后加）：情绪板缩得很小时，每张照片在屏幕上只有一两百像素，
+/// 几千张 1600px 的缩略图同时解码太占内存、太慢，改用长边 384 的
+pub const MINI_EDGE: u32 = 384;
+const MINI_QUALITY: f32 = 78.0;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +37,11 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
 pub fn cache_name(path: &str, mtime: f64, size: u64) -> String {
     let key = format!("{path}\u{0}{}\u{0}{size}", mtime as u64);
     format!("{:016x}.webp", fnv1a(key.as_bytes()))
+}
+
+/// 小缩略图的文件名：和 1600 的同一个键，后面加 -384
+pub fn mini_cache_name(path: &str, mtime: f64, size: u64) -> String {
+    cache_name(path, mtime, size).replace(".webp", "-384.webp")
 }
 
 /// 解码并按 EXIF 方向转正（PNG / JPEG / WebP / GIF / BMP / TIFF；动图取第一帧，多页 TIFF 取第一页；
@@ -75,6 +84,21 @@ pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
     }
     let color = dominant_color(&img);
     write_webp(&img, out, WEBP_QUALITY)?;
+    Ok(color)
+}
+
+/// 小缩略图：有 1600 的缩略图就从它缩（解码一张 WebP 比解码原图快得多），没有就从原图（RAW 挑小的内嵌预览）；返回主色
+pub fn generate_mini(src: &Path, thumb: Option<&Path>, out: &Path) -> Result<String, String> {
+    let mut img = match thumb.filter(|t| t.exists()) {
+        Some(t) => image::open(t).map_err(|e| e.to_string())?,
+        None => decode_for(src, Some(MINI_EDGE))?,
+    };
+    let (w, h) = img.dimensions();
+    if w.max(h) > MINI_EDGE {
+        img = img.thumbnail(MINI_EDGE, MINI_EDGE);
+    }
+    let color = dominant_color(&img);
+    write_webp(&img, out, MINI_QUALITY)?;
     Ok(color)
 }
 
@@ -158,21 +182,25 @@ fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// edge：不传是 1600 的缩略图；传 384（MINI_EDGE）是情绪板用的小缩略图
 #[tauri::command]
-pub async fn make_thumbnail(app: AppHandle, path: String, mtime: f64, size: u64) -> Result<Thumb, String> {
+pub async fn make_thumbnail(app: AppHandle, path: String, mtime: f64, size: u64, edge: Option<u32>) -> Result<Thumb, String> {
     // SVG 不生成缩略图：矢量原图本身就是最好的缩略图（所在文件夹 / 文件导入时已经放行）
     if crate::scan::is_svg(Path::new(&path)) {
         return Ok(Thumb { path, color: None });
     }
-    let out = thumbs_dir(&app)?.join(cache_name(&path, mtime, size));
+    let dir = thumbs_dir(&app)?;
+    let mini = edge.is_some_and(|e| e <= MINI_EDGE);
+    let out = dir.join(if mini { mini_cache_name(&path, mtime, size) } else { cache_name(&path, mtime, size) });
     if out.exists() {
         // 文件可能被系统重定向到别处（见 asset_scope.rs），按它的真实位置再放行一次
         crate::asset_scope::allow_real_file(&app, &out);
         return Ok(Thumb { path: out.to_string_lossy().into_owned(), color: None });
     }
     let target = out.clone();
+    let big = dir.join(cache_name(&path, mtime, size));
     let thumb = tauri::async_runtime::spawn_blocking(move || {
-        let color = generate(Path::new(&path), &target)?;
+        let color = if mini { generate_mini(Path::new(&path), Some(&big), &target)? } else { generate(Path::new(&path), &target)? };
         Ok::<_, String>(Thumb { path: target.to_string_lossy().into_owned(), color: Some(color) })
     })
     .await
@@ -190,6 +218,25 @@ mod tests {
         assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_ne!(cache_name("a.png", 1.0, 2), cache_name("a.png", 1.0, 3));
+    }
+
+    #[test]
+    fn makes_mini_from_thumbnail() {
+        let dir = std::env::temp_dir().join(format!("peekit-mini-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("big.png");
+        image::RgbImage::from_pixel(2000, 3200, image::Rgb([40, 120, 200])).save(&src).unwrap();
+        let thumb = dir.join("t.webp");
+        generate(&src, &thumb).unwrap();
+        let mini = dir.join("m.webp");
+        generate_mini(&src, Some(&thumb), &mini).unwrap();
+        assert_eq!(image::open(&mini).unwrap().dimensions(), (240, 384));
+        // 没有 1600 的缩略图：直接从原图缩
+        let mini2 = dir.join("m2.webp");
+        generate_mini(&src, None, &mini2).unwrap();
+        assert_eq!(image::open(&mini2).unwrap().dimensions(), (240, 384));
+        assert_ne!(mini_cache_name("a.png", 1.0, 2), cache_name("a.png", 1.0, 2));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

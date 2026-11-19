@@ -44,6 +44,14 @@ export const color = {
   // 左上角计数圆环（2026-11-18）：内圈的蓝色进度环、它下面的灰圈
   'color-counter': '#3D8BFF',
   'color-counter-track': 'rgba(0,0,0,0.13)',
+  // 情绪板（2026-11-18）：画布的点阵（细 / 粗两级）、选中框、阴影底色；拖起阵列的磨砂底和格子
+  'color-board-dot': 'rgba(22,22,22,0.17)',
+  'color-board-dot-major': 'rgba(22,22,22,0.28)',
+  'color-board-select': '#3D8BFF',
+  'color-board-shadow': 'rgba(38,30,12,0.34)',
+  'color-pick-scrim': 'rgba(213,213,211,0.40)',
+  'color-pick-tile': 'rgba(255,255,255,0.40)',
+  'color-pick-tile-border': 'rgba(255,255,255,0.78)',
 } as const;
 
 export type ColorToken = keyof typeof color;
@@ -87,6 +95,13 @@ export const colorDark: Record<ColorToken, string> = {
   'color-switch-moon': '#EEEAE0',
   'color-counter': '#3D8BFF',
   'color-counter-track': 'rgba(255,255,255,0.16)',
+  'color-board-dot': 'rgba(255,255,255,0.12)',
+  'color-board-dot-major': 'rgba(255,255,255,0.22)',
+  'color-board-select': '#5B9DFF',
+  'color-board-shadow': 'rgba(0,0,0,0.62)',
+  'color-pick-scrim': 'rgba(20,20,21,0.50)',
+  'color-pick-tile': 'rgba(255,255,255,0.07)',
+  'color-pick-tile-border': 'rgba(255,255,255,0.16)',
 };
 
 /** 新建系列时依次取用的系列色（只用于 8px 圆点） */
@@ -227,6 +242,21 @@ export const spring = {
   magnify: [260, 32],
   /** 全屏时的滚轮缩放 / 平移（2026-11-18 新增）：临界阻尼，滚一格大约 0.15s 到位（用户觉得慢，[420, 41] → [640, 51]） */
   fsZoom: [640, 51],
+  /**
+   * 情绪板（2026-11-18 新增）。阻尼比 ζ = c / (2√k)：
+   * 拖起的画作跟手 ζ≈0.94（一点点重量、不甩；原来 [520, 38] 用户觉得惯性太大）；缩放 ζ≈0.9；倾斜临界阻尼（不来回晃）；
+   * 阵列格子浮现 ζ≈0.71（过冲约 4%）；悬停放大 ζ≈0.68；画布镜头临界阻尼（缩放、平移不晃）；
+   * 照片吸附 / 整理 ζ≈0.87；磁吸 ζ≈0.88；打开情绪板 ζ≈0.92
+   */
+  lift: [760, 52],
+  liftScale: [360, 34],
+  liftTilt: [300, 34],
+  pickTile: [240, 22],
+  pickHover: [420, 28],
+  boardCam: [320, 36],
+  boardItem: [300, 30],
+  boardMagnet: [520, 40],
+  boardOpen: [200, 26],
 } as const;
 
 /** 舞台尺寸，单位 u = min(1vh, 0.6vw)，HANDOFF §2 */

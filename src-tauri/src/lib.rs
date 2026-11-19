@@ -31,10 +31,11 @@ fn asset_check(app: tauri::AppHandle, path: String) -> String {
     format!("范围允许={allowed}；规范路径={canon}；{open}")
 }
 
-/// 设置了环境变量 PEEKIT_PERF=1 时，前端启动后自动跑一遍性能探针
+/// 环境变量 PEEKIT_PERF：1 = 前端启动后自动跑一遍舞台的性能探针；board = 只跑情绪板压测（2026-11-19）。
+/// 没设返回空字符串
 #[tauri::command]
-fn perf_mode() -> bool {
-    std::env::var("PEEKIT_PERF").map(|v| v == "1").unwrap_or(false)
+fn perf_mode() -> String {
+    std::env::var("PEEKIT_PERF").unwrap_or_default()
 }
 
 /// 更新自测（发版前用）：PEEKIT_UPDATE_PROBE=check 只检查；=download 检查并下载、验签，不安装；

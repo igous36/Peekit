@@ -13,6 +13,8 @@ import { applyToSample } from './data/library';
 import { createLibraryStore, type StoredData } from './data/persist';
 import { loadSets, parseSets } from './data/sets';
 import { LibraryService } from './data/service';
+import { parseBoards } from './data/boards';
+import { BoardStore } from './data/board-store';
 import { logError, setThemeBackground } from './data/tauri-io';
 import { initTheme, onThemeChange, theme } from './theme';
 import type { Library } from './data/types';
@@ -38,7 +40,7 @@ async function boot(): Promise<void> {
     window.addEventListener('unhandledrejection', (e) => logError(`未处理的 Promise 拒绝 ${String(e.reason)}`));
   }
   const store = createLibraryStore();
-  let stored: StoredData = { sets: null, legacy: null };
+  let stored: StoredData = { sets: null, legacy: null, boards: null };
   try {
     stored = await store.load();
   } catch (err) {
@@ -48,6 +50,8 @@ async function boot(): Promise<void> {
   const data = loadSets(stored.sets, stored.legacy);
   const service = new LibraryService(data, store, desktop);
   if (!parseSets(stored.sets)) store.save(data); // 迁移后立刻写一份 v3
+  // 情绪板（2026-11-18）：和预览集互相独立
+  const boards = new BoardStore(parseBoards(stored.boards), store);
 
   // 浏览器调试：第一个预览集显示示例数据，其余是空的（浏览器里不能导入）
   const sampleSetId = data.sets[0].id;
@@ -64,9 +68,14 @@ async function boot(): Promise<void> {
   let loading = false;
   if (desktop) loading = service.saved.sources.length > 0;
   else lib = await loadLibrary();
-  const app = new App(mount, { lib, service, initialIndex: desktop ? 0 : 3, loading, loadLibrary });
+  const app = new App(mount, { lib, service, boards, initialIndex: desktop ? 0 : 3, loading, loadLibrary });
   // 调试用：在开发者工具里可以直接改 app.m.pos 再调用 app.render()
-  if (import.meta.env.DEV) (window as unknown as { app: App }).app = app;
+  if (import.meta.env.DEV) {
+    (window as unknown as { app: App }).app = app;
+    // 情绪板压测（2026-11-19）：开发者工具里 await boardStress() 或 boardStress([500])
+    (window as unknown as { boardStress: (c?: number[]) => Promise<void> }).boardStress = async (counts?: number[]) =>
+      (await import('./perf-board')).runBoardStress(app, (m) => console.log(m), counts);
+  }
 
   if (desktop && loading) {
     try {
@@ -80,9 +89,11 @@ async function boot(): Promise<void> {
   }
 
   // 性能探针：只在 PEEKIT_PERF=1 启动时运行
-  if (desktop && (await invoke<boolean>('perf_mode').catch(() => false))) {
-    const { runPerfProbe } = await import('./perf');
-    await runPerfProbe(app);
+  // 性能探针：只在 PEEKIT_PERF=1（舞台）或 PEEKIT_PERF=board（情绪板压测）启动时运行
+  const perf = desktop ? await invoke<string>('perf_mode').catch(() => '') : '';
+  if (perf === '1' || perf === 'board') {
+    const { runPerfProbe, runBoardProbe } = await import('./perf');
+    await (perf === 'board' ? runBoardProbe(app) : runPerfProbe(app));
   }
 }
 

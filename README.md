@@ -10,7 +10,8 @@ Peekit is a desktop viewer for artists to browse their own work. You push the pa
 
 - Timeline browsing: 1:1 drag with spring physics, inertia snapping and rubber-banding at both ends. Up to three paintings sit in front of the glass; the rest sink behind it while the glass tiles part around them and close again when you stop.
 - Series view: drag down (or press ↓) to zoom out and see every work in the same series.
-- Enlarge and fullscreen: hold, drag up or scroll up to enlarge a painting; keep going (or double-click / F11) for fullscreen on a dark background, where the mouse wheel zooms around the cursor and you can drag to pan.
+- Enlarge and fullscreen: drag up or scroll up to enlarge a painting; keep going (or double-click / F11) for fullscreen on a dark background, where the mouse wheel zooms around the cursor and you can drag to pan.
+- Mood boards: hold the painting in the middle and it lifts off the stage. The glass tiles spread out and new ones rise until they fill the window; drop the painting on a board to add it, on an empty tile to start a new board, or on the two tiles in the middle to name a new board or pick an existing one. On the board, a photo dragged near another snaps to its edge with one side lined up, and photos that touch form a cluster with its own outline, glow and shadow colour. Drag edges to resize, scroll over a photo to enlarge it in place, double-click for fullscreen, and right-click to pack a selection, a cluster or the whole board into tight rows, or to merge photos from several clusters into one. Drag the series tag on the info card to add a whole series at once; in the series view, drag or scroll down once more to jump to the board the current painting is in.
 - Your own library: import image files or whole folders (menu or drag & drop). Folders are remembered and rescanned on launch or with View → Refresh (F5). Supports PNG, JPG, WebP, GIF (animated), BMP, TIFF, SVG and camera RAW (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF and more, shown from the embedded preview; a RAW + JPG pair with the same name counts as one work).
 - Collections: keep separate preview collections and switch between them; create, rename, duplicate and delete them from the menu.
 - Dates from metadata: EXIF, then XMP, then the file's modified time. Works are ordered from oldest to newest.
@@ -46,7 +47,7 @@ npm run tauri build      # release build + installers (MSI / NSIS on Windows)
 
 `npm run dev` alone serves the UI in a browser with built-in sample data, which is handy for layout work (importing only works in the desktop app).
 
-Performance check: start the app with `PEEKIT_PERF=1` set and it will drive itself through drags, flings and zooms for about a minute, print frame-time statistics to the terminal, then close. It never touches your saved library.
+Performance check: start the app with `PEEKIT_PERF=1` set and it will drive itself through drags, flings and zooms for about a minute, print frame-time statistics to the terminal, then close. `PEEKIT_PERF=board` does the same for mood boards with 200, 1,000 and 2,500 photos. Neither touches your saved library.
 
 ### Releases
 

@@ -1,5 +1,6 @@
 // 应用外壳：持有作品库和运动状态，组装各个视图，render() 把状态算成样式。
 // 弹簧积分和输入处理在 Controller 里；render() 由 Controller 的 rAF 循环每帧调用一次。
+// 2026-11-18：情绪板——长按中间那幅拖起（BoardPicker），拖进情绪板；情绪板画布（BoardView）盖在舞台上面。
 import type { Library, Series, Work } from './data/types';
 import { createMotion, type Motion } from './engine/motion';
 import {
@@ -34,14 +35,24 @@ import { ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_
 import { ColorPicker } from './view/series-color';
 import { RenamePopover } from './view/series-rename';
 import { installFocusOrder } from './view/focus-order';
+import { BoardPicker, type BoardPreview, type PickMode, type PickTarget } from './view/board-picker';
+import { BoardView } from './view/board/board-view';
+import { BoardThumbs } from './view/board/board-thumbs';
+import { fillArt } from './view/art';
+import type { BoardStore } from './data/board-store';
+import {
+  addPhotos, boardsByRecent, createBoard, deleteBoard, duplicateBoard, groupColor, hasPhoto, renameBoard, uniqueBoardName,
+  type Board, type BoardItem, type PhotoSource,
+} from './data/boards';
+import { bounds } from './engine/board-layout';
 import type { LibraryService } from './data/service';
-import type { Source } from './data/library';
 import { nameFromSources } from './data/sets';
 import { GIF_ANIM_BUDGET, gifCandidates, gifMayAnimate, imageKind } from './data/formats';
 import {
   appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeDisplay, makeThumbnail, onFileDrop, openExternal,
-  pickFiles, pickFolders, revealInFolder, saveImageAs, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
+  MINI_EDGE, pickFiles, pickFolders, revealInFolder, saveImageAs, scanSources, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
 } from './data/tauri-io';
+import type { Source } from './data/library';
 import { ThumbLoader } from './data/thumb-loader';
 import { PaletteLoader } from './data/palette-loader';
 import {
@@ -57,6 +68,8 @@ export interface UiState extends UiFlags {
 export interface AppOptions {
   lib: Library;
   service: LibraryService;
+  /** 情绪板（2026-11-18） */
+  boards: BoardStore;
   initialIndex: number;
   /** 启动时还在扫描导入过的来源 */
   loading?: boolean;
@@ -77,6 +90,9 @@ const needsOriginal = (w: Work, magnified: boolean): boolean =>
 const aspectOf = (w: Work): number | undefined => (w.width && w.height ? w.width / w.height : undefined);
 
 const NO_MEMBERS: readonly number[] = [];
+
+/** 拖起阵列里情绪板预览框的宽高比（和 styles.css 里 .pick-art 的 78% × 62% 一致） */
+const PICK_ART_ASPECT = 0.78 / 0.62;
 
 /** 右键删除前的作品库状态（撤销用） */
 interface UndoSnapshot {
@@ -160,10 +176,25 @@ export class App {
   private saveTimer = 0;
   private thumbRetries = new Map<string, number>();
   private reveal = { left: false, right: false };
+  // 情绪板（2026-11-18）
+  private boards: BoardStore;
+  private boardView: BoardView;
+  private picker: BoardPicker;
+  private boardThumbs: BoardThumbs;
+  /**
+   * 拖起阵列开着时要加进情绪板的作品：一幅（长按画作 / 点选），或者一整个系列（拖信息卡上的系列标签）。
+   * hide：舞台上由替身接替、要藏起来的那幅；mode：拖着进来的还是点选
+   */
+  private carry: { works: Work[]; series?: string; hide: string | null; mode: PickMode } | null = null;
+  private boardCover = false;
+  /** 文件路径 → 作品（情绪板复用舞台已经生成好的缩略图），作品列表换了重建 */
+  private byPath = new Map<string, Work>();
+  private byPathFor: readonly Work[] | null = null;
 
   constructor(mount: HTMLElement, opts: AppOptions) {
     this.lib = opts.lib;
     this.service = opts.service;
+    this.boards = opts.boards;
     this.loadLibrary = opts.loadLibrary;
     this.loading = !!opts.loading;
     this.indexSeries();
@@ -212,6 +243,7 @@ export class App {
       finish: this.finishEdit,
       cancel: this.cancelEdit,
       seriesMenu: (id, x, y) => this.openSeriesMenu(id, x, y),
+      seriesDrag: (e, chip) => this.onSeriesChipDown(e, chip),
     });
     this.timeline = new Timeline({
       go: (i) => ctl.go(i),
@@ -234,6 +266,12 @@ export class App {
       contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
       about: () => void this.about.open(),
       installUpdate: () => void this.updater.install(),
+      boards: this.boardInfos,
+      openBoard: (id) => this.openBoard(id),
+      newBoard: this.newBoard,
+      renameBoard: this.renameBoard,
+      deleteBoard: this.deleteBoard,
+      duplicateBoard: this.duplicateBoard,
     });
     this.ctxMenu = new ContextMenu();
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
@@ -270,6 +308,7 @@ export class App {
     // 自动更新：安装程序会直接关掉应用，交给它之前先把作品库写盘
     this.updater = new Updater(updaterDeps(async () => {
       this.flushSave();
+      await this.boards.flush();
       await this.service.flush();
     }));
     this.updater.subscribe(this.onUpdate);
@@ -280,6 +319,59 @@ export class App {
     this.winControls = new WindowControls(() => ctl.toggleFullscreen());
     this.infoFade = new Styled(this.info.root);
     this.timelineFade = new Styled(this.timeline.root);
+
+    // 情绪板：缩略图和舞台共用 Rust 端的缓存；舞台上已经有的直接用
+    this.boardThumbs = new BoardThumbs(
+      this.service.desktop
+        ? async (it, size) => {
+          const r = await makeThumbnail(it.path!, it.mtime ?? 0, it.size ?? 0, size === 'mini' ? MINI_EDGE : undefined);
+          return { url: assetUrl(r.path), color: r.color };
+        }
+        : null,
+      (path) => this.workByPath(path)?.thumb,
+      () => {
+        this.boardView.refreshImages();
+        this.picker.refreshBoards();
+        ctl.kick();
+      },
+    );
+    this.boardView = new BoardView({
+      kick: () => ctl.kick(),
+      toast: (msg, action) => this.toast.show(msg, action ? { action } : false),
+      contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
+      back: this.closeBoard,
+      save: () => this.boards.saveSoon(),
+      thumb: (it, mini) => this.boardThumbs.url(it, mini),
+      hiRes: (it, done) => void this.boardHiRes(it, done),
+      setFullscreen: (on) => this.setFullscreen(on),
+      pickImages: () => this.pickBoardImages(),
+      copyImage: (it) => {
+        const fail = (err: unknown) => this.toast.show(t('toast.actionFailed', { msg: String(err) }));
+        void this.copyWork(this.workOfItem(it)).then(() => this.toast.show(t('toast.copied')), fail);
+      },
+      reveal: (it) => void revealInFolder(it.path!).catch((err) => this.toast.show(t('toast.actionFailed', { msg: String(err) }))),
+      rename: (x, y) => {
+        const b = this.boardView.board;
+        if (!b) return;
+        this.renamePop.open({ name: b.name, color: '' }, x, y, (name) => this.renameBoard(b.id, name), { title: t('board.renameTitle') });
+      },
+      paintSample: (it, canvas) => fillArt(canvas, this.workOfItem(it), undefined),
+      desktop: this.service.desktop,
+    });
+    this.picker = new BoardPicker({
+      kick: () => ctl.kick(),
+      boards: () => this.boardPreviews(),
+      drop: (target, anchor) => this.dropLifted(target, anchor),
+      finished: (added, mode) => {
+        const w = this.carry?.works[0];
+        this.carry = null;
+        // 点选：加进去之后直接打开那个情绪板
+        const b = added && mode === 'browse' ? this.boards.byId(added) : undefined;
+        if (b) this.openBoard(b.id, w ? this.itemIn(b, w) : undefined);
+        ctl.kick();
+      },
+      suppressClick: () => ctl.suppressClick(),
+    });
 
     // DOM 顺序即焦点顺序：舞台 → 菜单 → 预览集 → 信息卡 → 时间轴 → 窗口按钮（HANDOFF §9）
     this.root = el('div', { class: 'app' }, [
@@ -294,10 +386,12 @@ export class App {
       this.hud.hint,
       this.empty.root,
       this.timeline.root,
+      this.boardView.root,
       this.toast.root,
       this.zoomBadge,
       this.winControls.root,
       this.drop.root,
+      this.picker.root,
       this.ctxMenu.root,
       this.colorPicker.root,
       this.renamePop.root,
@@ -340,7 +434,10 @@ export class App {
       );
       void onFileDrop((phase, paths) => {
         this.drop.set(phase === 'over');
-        if (phase === 'drop' && paths.length) void this.importSources(classifyDropped(paths), this.service.current.id);
+        if (phase !== 'drop' || !paths.length) return;
+        // 情绪板开着：拖进来的图片加进情绪板（多张按最密结构排成一块）
+        if (this.boardView.isOpen) void this.addFilesToBoard(classifyDropped(paths));
+        else void this.importSources(classifyDropped(paths), this.service.current.id);
       });
     }
     this.render();
@@ -408,6 +505,352 @@ export class App {
     return { w: full.w, h: full.h, naturalW: w?.width, dpr: window.devicePixelRatio || 1 };
   }
 
+  // ───────────── 情绪板（2026-11-18） ─────────────
+
+  /** 舞台以外的弹簧：拖起阵列、情绪板（Controller 的循环每帧调用） */
+  stepExtra(dt: number): boolean {
+    const a = this.picker.step(dt);
+    const b = this.boardView.step(dt);
+    return a || b;
+  }
+
+  blockKeys(): boolean {
+    return this.boardView.isOpen || this.picker.active;
+  }
+
+  /** 舞台中间那幅卡片在屏幕上的位置 */
+  private cardRectOf(i: number): { cx: number; cy: number; w: number; h: number } | null {
+    const w = this.lib.works[i];
+    if (!w) return null;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const art = artSize(aspectOf(w));
+    const p = paintingAt(i - this.m.pos, { press: clamp(this.m.press, -0.2, 1.2), pxN: 0, pyN: 0, vel: 0 }, art);
+    return p ? cardRect(p.x, p.y, art.w, art.h, p.s, stageUnit(vw, vh), cameraScale(this.m.zoom), vw, vh) : null;
+  }
+
+  /** 长按到时间：按在中间那幅上就拖起它 */
+  lift(pointerId: number, x: number, y: number): boolean {
+    if (this.ui.editing || this.loading || this.picker.active || this.boardView.isOpen) return false;
+    const works = this.lib.works;
+    if (!works.length || this.m.zoom > 0.05 || this.controller.magnified) return false;
+    const { cur } = currentOf(this.m.pos, works.length);
+    const w = works[cur];
+    const r = this.cardRectOf(cur);
+    if (!r || Math.abs(x - r.cx) > r.w / 2 || Math.abs(y - r.cy) > r.h / 2) return false;
+    this.carry = { works: [w], hide: w.id, mode: 'drag' };
+    const src = w.broken ? undefined : this.hiRes && this.hiRes.id === w.id ? this.hiRes.url : w.thumb;
+    this.picker.open(
+      {
+        src, bg: w.bg, title: displayTitle(w), rect: r,
+        art: w.shapes ? (canvas) => fillArt(canvas, w, undefined) : undefined,
+      },
+      pointerId, x, y,
+    );
+    return true;
+  }
+
+  /** 信息卡上的系列标签按下：拖出 6px 后把整个系列拖起来（只是点一下不算） */
+  private onSeriesChipDown(e: PointerEvent, chip: HTMLElement): void {
+    if (e.button !== 0 || this.ui.editing || this.loading || this.picker.active || this.boardView.isOpen) return;
+    const id = e.pointerId, x0 = e.clientX, y0 = e.clientY;
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== id || Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+      done();
+      this.liftSeries(id, ev.clientX, ev.clientY, chip.getBoundingClientRect());
+    };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId === id) done();
+    };
+    const done = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  }
+
+  /**
+   * 拖起整个系列：替身是一叠照片（当前这幅在最上面，后面垫两张），从标签那么小长出来，右上角写张数；
+   * 落进格子后整个系列加进情绪板，排成一个集合
+   */
+  private liftSeries(pointerId: number, x: number, y: number, chip: DOMRect): void {
+    const works = this.lib.works;
+    if (!works.length) return;
+    const w = works[currentOf(this.m.pos, works.length).cur];
+    const list = this.membersOf(w.series).map((i) => works[i]);
+    if (!list.length) return;
+    const thumb = (o: Work) => (o.broken ? undefined : o.thumb);
+    const W = 150, H = 188;
+    this.carry = { works: list, series: displayName(this.seriesOf(w)), hide: null, mode: 'drag' };
+    this.picker.open(
+      {
+        src: thumb(w), bg: w.bg, title: displayName(this.seriesOf(w)),
+        rect: { cx: chip.left + chip.width / 2, cy: chip.top + chip.height / 2, w: W, h: H },
+        art: w.shapes ? (canvas) => fillArt(canvas, w, undefined) : undefined,
+        startScale: Math.max(0.1, chip.height / H),
+        stack: { backs: list.filter((o) => o !== w).slice(0, 2).map((o) => ({ src: thumb(o), bg: o.bg })), count: list.length },
+      },
+      pointerId, x, y,
+    );
+  }
+
+  /** 这幅作品在情绪板里对应的照片 */
+  private itemIn(b: Board, w: Work): string | undefined {
+    return b.items.find((it) => (w.path ? it.path === w.path : it.ref === w.id))?.id;
+  }
+
+  /**
+   * 系列视图里继续往下拉 / 往下滚（Controller 调用）：进入当前这幅所在的情绪板。
+   * 只在一个情绪板里：直接打开；在好几个里：弹出列表选；还不在任何情绪板里：打开阵列（点选，不用拖）
+   */
+  boardsGesture(): void {
+    if (this.ui.editing || this.loading || this.picker.active || this.boardView.isOpen) return;
+    const w = this.target();
+    if (!w) return;
+    const photo = this.photoOf(w);
+    const list = boardsByRecent(this.boards.data).filter((b) => hasPhoto(b, photo));
+    if (list.length === 1) {
+      this.openBoard(list[0].id, this.itemIn(list[0], w));
+      return;
+    }
+    if (list.length > 1) {
+      this.ctxMenu.show(
+        [
+          { caption: t('board.openWhich') },
+          ...list.map((b) => ({ label: b.name, trail: String(b.items.length), run: () => this.openBoard(b.id, this.itemIn(b, w)) })),
+        ],
+        window.innerWidth / 2 - 120, window.innerHeight * 0.36, t('board.openWhich'),
+      );
+      return;
+    }
+    this.carry = { works: [w], hide: null, mode: 'browse' };
+    this.picker.browse(cameraScale(this.m.zoom));
+  }
+
+  private workByPath(path: string): Work | undefined {
+    if (this.byPathFor !== this.lib.works) {
+      this.byPath = new Map(this.lib.works.filter((w) => w.path).map((w) => [w.path!, w]));
+      this.byPathFor = this.lib.works;
+    }
+    return this.byPath.get(path);
+  }
+
+  /** 作品 → 情绪板照片的来源 */
+  private photoOf(w: Work): PhotoSource {
+    const info = w.path ? this.service.fileInfo(w.id) : { mtime: 0, size: 0 };
+    return {
+      path: w.path, ref: w.path ? undefined : w.id, shapes: w.path ? undefined : w.shapes,
+      title: displayTitle(w), pw: w.width ?? 800, ph: w.height ?? 1000, mtime: info.mtime, size: info.size,
+      color: w.bg,
+    };
+  }
+
+  /** 情绪板照片 → 作品（复制图像、画示例占位图用） */
+  private workOfItem(it: BoardItem): Work {
+    return {
+      id: it.path ?? it.ref ?? it.id, title: it.title, date: '', series: '', bg: it.color ?? '#D8D8D6',
+      shapes: it.shapes, path: it.path, width: it.pw, height: it.ph,
+    };
+  }
+
+  /** 情绪板列表（菜单用；current = 正在看的那个） */
+  private boardInfos = (): SetInfo[] => {
+    const open = this.boardView.isOpen ? this.boardView.board?.id : undefined;
+    return boardsByRecent(this.boards.data).map((b) => ({ id: b.id, name: b.name, count: b.items.length, current: b.id === open }));
+  };
+
+  /** 拖起阵列里的情绪板预览：整个情绪板的外框按比例放进预览框（居中），最多画最大的 16 张 */
+  private boardPreviews(): BoardPreview[] {
+    return boardsByRecent(this.boards.data).map((b) => {
+      const bb = bounds(b.items);
+      const A = PICK_ART_ASPECT;
+      // 预览框对应的画布范围（宽 W、高 H），外框居中放进去
+      const W = Math.max(bb.w, bb.h * A, 1), H = W / A;
+      const ox = bb.x - (W - bb.w) / 2, oy = bb.y - (H - bb.h) / 2;
+      const items = [...b.items].sort((p, q) => q.w * q.h - p.w * p.h).slice(0, 16);
+      return {
+        id: b.id, name: b.name, count: b.items.length,
+        items: items.map((it) => ({
+          x: (it.x - ox) / W, y: (it.y - oy) / H, w: it.w / W, h: it.h / H,
+          url: this.boardThumbs.url(it, true), color: it.color, ring: groupColor(b, it.group),
+        })),
+      };
+    });
+  }
+
+  /** 拖起的画作（或系列）落进格子 / 点选了格子 */
+  private dropLifted(target: PickTarget, a: { x: number; y: number; w: number; h: number }): Promise<string | null> {
+    const c = this.carry;
+    if (!c) return Promise.resolve(null);
+    const photos = c.works.map((w) => this.photoOf(w));
+    const addTo = (b: Board): string | null => {
+      const fresh = photos.filter((p) => !hasPhoto(b, p));
+      if (!fresh.length) {
+        this.toast.show(t(c.series ? 'board.allAlreadyIn' : 'board.alreadyIn', { name: b.name }));
+        return null;
+      }
+      // 多张（系列）按最密结构排成一块，是一个集合
+      const items = addPhotos(b, fresh);
+      this.boards.saveSoon();
+      // 点选的话马上就打开这个情绪板，不用提示
+      if (c.mode === 'drag') {
+        const msg = c.series
+          ? t('board.addedSeries', { series: c.series, n: items.length, name: b.name })
+          : t('board.added', { name: b.name });
+        this.toast.show(msg, { action: { label: t('board.open'), run: () => this.openBoard(b.id, items[0]?.id) } });
+      }
+      return b.id;
+    };
+    if (target.kind === 'board') {
+      const b = this.boards.byId(target.boardId);
+      return Promise.resolve(b ? addTo(b) : null);
+    }
+    if (target.kind === 'empty') return Promise.resolve(addTo(createBoard(this.boards.data)));
+    if (target.kind === 'new') {
+      return new Promise((resolve) => {
+        this.renamePop.open(
+          { name: uniqueBoardName(this.boards.data), color: '' }, a.x + a.w + 12, a.y,
+          (name) => resolve(addTo(createBoard(this.boards.data, name))),
+          { title: t('board.nameTitle'), cancel: () => resolve(null) },
+        );
+      });
+    }
+    return new Promise((resolve) => {
+      const list = boardsByRecent(this.boards.data);
+      if (!list.length) {
+        this.toast.show(t('board.noneYet'));
+        resolve(null);
+        return;
+      }
+      this.ctxMenu.show(
+        [
+          { caption: t('board.chooseTitle') },
+          ...list.map((b) => ({ label: b.name, trail: String(b.items.length), run: () => resolve(addTo(b)) })),
+        ],
+        a.x + a.w + 12, a.y, t('board.chooseTitle'),
+        (chosen) => {
+          if (!chosen) resolve(null);
+        },
+      );
+    });
+  }
+
+  private openBoard(id: string, focusItem?: string): void {
+    const b = this.boards.byId(id);
+    if (!b) return;
+    if (this.controller.fullscreen) this.controller.toggleFullscreen();
+    else if (this.controller.magnified) this.controller.magnify(false);
+    if (this.ui.editing) this.finishEdit();
+    if (this.boardView.board && this.boardView.board !== b) this.boardView.detach();
+    this.boardView.open(b, focusItem);
+    this.controller.kick();
+  }
+
+  private closeBoard = (): void => {
+    this.boardView.close();
+    // 舞台马上恢复可见（不等情绪板淡出完），焦点才能交还给它
+    this.boardCover = false;
+    this.root.classList.remove('is-board');
+    this.boards.saveSoon();
+    this.stage.section.focus({ preventScroll: true });
+    this.controller.kick();
+  };
+
+  private newBoard = (): void => {
+    const b = createBoard(this.boards.data);
+    this.boards.saveSoon();
+    this.toast.show(t('board.created', { name: b.name }));
+    this.openBoard(b.id);
+  };
+
+  private renameBoard = (id: string, name: string): void => {
+    if (!renameBoard(this.boards.data, id, name)) return;
+    this.boards.saveSoon();
+    if (this.boardView.board?.id === id) this.boardView.updateTitle();
+  };
+
+  private deleteBoard = (id: string): void => {
+    const i = this.boards.data.boards.findIndex((b) => b.id === id);
+    if (this.boardView.board?.id === id) {
+      this.boardView.detach();
+    }
+    const gone = deleteBoard(this.boards.data, id);
+    if (!gone) return;
+    this.boards.saveSoon();
+    this.controller.kick();
+    this.toast.show(t('board.deleted', { name: gone.name }), {
+      action: {
+        label: t('toast.undo'),
+        run: () => {
+          this.boards.data.boards.splice(Math.min(i, this.boards.data.boards.length), 0, gone);
+          this.boards.saveSoon();
+          this.toast.show(t('toast.undone'));
+        },
+      },
+    });
+  };
+
+  private duplicateBoard = (id: string): string | null => {
+    const b = duplicateBoard(this.boards.data, id);
+    if (!b) return null;
+    this.boards.saveSoon();
+    this.toast.show(t('board.duplicated', { name: b.name }));
+    return b.id;
+  };
+
+  /** 情绪板里聚焦 / 全屏的照片停留 300ms 后换原图（规则和舞台一样，见 requestHiRes） */
+  private async boardHiRes(it: BoardItem, done: (url: string) => void): Promise<void> {
+    if (!it.path || !this.service.desktop) return;
+    const kind = imageKind(it.path);
+    if (kind === 'svg') return;
+    try {
+      let url = assetUrl(it.path);
+      if (kind === 'convert') url = assetUrl(await makeDisplay(it.path, it.mtime ?? 0, it.size ?? 0, false));
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = url;
+      await img.decode();
+      done(url);
+    } catch {
+      /* 原图读不了：继续用缩略图 */
+    }
+  }
+
+  /** 读图片文件的尺寸和日期（扫描），变成情绪板照片的来源 */
+  private async photosFrom(sources: Source[]): Promise<PhotoSource[]> {
+    const r = await scanSources(sources, {});
+    return r.items.map((x) => ({
+      path: x.path, title: x.title, pw: x.width, ph: x.height, mtime: x.mtime, size: x.size,
+      color: this.workByPath(x.path)?.bg,
+    }));
+  }
+
+  private async pickBoardImages(): Promise<PhotoSource[]> {
+    if (!this.service.desktop) {
+      this.toast.show(t('import.desktopOnly'));
+      return [];
+    }
+    try {
+      return await this.photosFrom(await pickFiles());
+    } catch (err) {
+      this.toast.show(t('import.failed', { msg: String(err) }));
+      return [];
+    }
+  }
+
+  private async addFilesToBoard(sources: Source[]): Promise<void> {
+    try {
+      const photos = await this.photosFrom(sources);
+      if (!photos.length || !this.boardView.isOpen) return;
+      const n = this.boardView.addPhotos(photos);
+      this.toast.show(n ? t('board.addedN', { n }) : t('board.already'));
+    } catch (err) {
+      this.toast.show(t('import.failed', { msg: String(err) }));
+    }
+  }
+
   /** 已经在头 / 尾还往外翻：左上角计数跳一下（2026-11-18） */
   edgeBump(): void {
     this.hud.counter.bump();
@@ -454,6 +897,7 @@ export class App {
   freezeSaving(): void {
     window.clearTimeout(this.saveTimer);
     this.service.freeze();
+    this.boards.freeze();
   }
 
   /**
@@ -1166,6 +1610,16 @@ export class App {
     const m = this.m;
     const vw = window.innerWidth, vh = window.innerHeight;
 
+    // 情绪板和拖起阵列；情绪板完全盖住舞台时，舞台和信息卡这些都不用画
+    this.picker.render();
+    this.boardView.render();
+    const cover = this.boardView.covering;
+    if (cover !== this.boardCover) {
+      this.boardCover = cover;
+      this.root.classList.toggle('is-board', cover);
+    }
+    if (cover) return;
+
     const empty = n === 0;
     if (empty !== this.isEmpty) {
       this.isEmpty = empty;
@@ -1242,6 +1696,7 @@ export class App {
       animPlay: !moving,
       mag,
       fs: clamp(m.fs, 0, 1),
+      lifted: this.carry?.hide ? { id: this.carry.hide, alpha: this.picker.cardAlpha.v } : null,
     });
 
     // 放大层：从舞台中间那张卡片的位置长出来

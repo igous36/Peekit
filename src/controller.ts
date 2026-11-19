@@ -4,12 +4,14 @@
 //
 // 2026-11-17 新增：放大查看（按住左键 / 滚轮上滑 / ↑），单击恢复；双击 / F11 全屏；
 // 时间轴指示条拖动（scrub）。
+// 2026-11-18：长按中间那幅改成“拖起”（交给 BoardPicker，拖进情绪板），长按别处仍是放大；
+// 情绪板和拖起阵列的弹簧也在这个循环里推进（host.stepExtra），全部静止才停。
 import type { Motion } from './engine/motion';
 import { stepMotion, type Axis, type Spring } from './engine/springs';
 import {
   AXIS_LOCK_PX, CLICK_GUARD_MS, cameraLevel, dragLevel, dragPosition, levelTargets, lockAxis, magDragSpan, pushSample,
   releaseLevel, releasePosition, stageUnit, type CameraLevel, fsPull, fsPreview, FS_PULL_ENTER,
-  type Sample,
+  type Sample, boardPull, BOARD_PULL_ENTER,
 } from './engine/gesture';
 import {
   FIT, RUBBER_RESET_MS, ZOOM_PER_PX, feedWheelGate, landWheelGate, maxZoom, newWheelGate, panBy, resetWheelGate,
@@ -24,7 +26,7 @@ import { clamp } from './engine/math';
 import { spring } from './tokens';
 import { prefs, wheelCanToggleFullscreen } from './prefs';
 
-/** 按住不动这么久就放大 */
+/** 按住不动这么久就放大（按在中间那幅上是拖起） */
 export const LONG_PRESS_MS = 350;
 /** 放大状态下单击后等这么久，确认不是双击的第一下再恢复 */
 export const DOUBLE_CLICK_WAIT_MS = 320;
@@ -48,6 +50,14 @@ export interface ControllerHost {
   zoomActivity(): void;
   /** 已经在头 / 尾还往外翻（按键、滚轮、时间轴按钮）：左上角计数提示到头了（2026-11-18） */
   edgeBump(): void;
+  /** 舞台以外的弹簧（拖起阵列、情绪板）走一帧，返回是否还在动 */
+  stepExtra?(dt: number): boolean;
+  /** 长按到时间：按在中间那幅上就拖起它（返回 true，之后的指针事件由拖起阵列接手） */
+  lift?(pointerId: number, x: number, y: number): boolean;
+  /** 情绪板开着时，舞台的全局按键（F11 / Esc）不处理 */
+  blockKeys?(): boolean;
+  /** 系列视图里继续往下拉 / 往下滚 / ↓：进入当前这幅所在的情绪板 */
+  boardsGesture?(): void;
 }
 
 interface DragState {
@@ -72,6 +82,9 @@ interface DragState {
   mag: boolean;
   /** 全屏且放大了：这次拖动用来平移画面（不切换作品、不退出全屏） */
   pan: { px0: number; py0: number; moving: boolean } | null;
+  /** 指针现在的位置（长按拖起时从这里开始） */
+  lx: number;
+  ly: number;
 }
 
 /** 落位手感，原型 Tweaks 里的“动效 · 手感”，默认标准 */
@@ -127,6 +140,11 @@ export class Controller {
     return this.m.fsT > 0.5;
   }
 
+  /** 停在系列视图（镜头目标拉远、没有放大） */
+  get inSeries(): boolean {
+    return this.m.zoomT > 0.5 && this.m.magT < 0.5;
+  }
+
   attach(root: HTMLElement, stage: HTMLElement): void {
     stage.addEventListener('pointerdown', this.onDown);
     stage.addEventListener('wheel', this.onWheel, { passive: true });
@@ -138,7 +156,7 @@ export class Controller {
     root.addEventListener('pointercancel', this.onUp);
     // 全屏时焦点可能不在舞台上：Esc / F11 在整个窗口都生效
     document.addEventListener('keydown', (e) => {
-      if (e.defaultPrevented || isTyping(e.target)) return;
+      if (e.defaultPrevented || isTyping(e.target) || this.host.blockKeys?.()) return;
       if (e.key === 'F11' || (e.key === 'Escape' && this.fullscreen)) {
         e.preventDefault();
         this.apply(keyAction(e.key)!);
@@ -155,6 +173,7 @@ export class Controller {
     const dt = this.last ? (now - this.last) / 1000 : 1 / 60;
     this.last = now;
     const reduced = this.reduced;
+    const busy = this.host.stepExtra?.(dt) ?? false;
     const r = stepMotion(this.m, dt, {
       axis: this.drag ? this.drag.axis : this.scrubbing ? 'x' : null,
       dragging: this.drag !== null || this.scrubbing,
@@ -166,7 +185,7 @@ export class Controller {
     });
     this.navMove = r.navMove;
     this.host.render();
-    if (r.settled) {
+    if (r.settled && !busy) {
       this.last = 0;
       return;
     }
@@ -309,16 +328,26 @@ export class Controller {
       exitMag: false,
       mag: this.magnified,
       pan: this.fsZoomed ? { px0: m.fpxT, py0: m.fpyT, moving: false } : null,
+      lx: e.clientX,
+      ly: e.clientY,
     };
     this.drag = d;
     // 按住不动 0.35s：放大查看（松开后保持，单击 / 滚轮下滑 / Esc 恢复）
     window.clearTimeout(this.pressTimer);
     if (!this.magnified) {
       this.pressTimer = window.setTimeout(() => {
-        if (this.drag === d && !d.axis) {
-          d.peeked = true;
-          this.magnify(true);
+        if (this.drag !== d || d.axis) return;
+        // 按在中间那幅上：拖起来（拖进情绪板）；这次按住不再算拖动 / 单击
+        if (this.host.lift?.(d.id, d.lx, d.ly)) {
+          this.drag = null;
+          this.dragEndAt = performance.now();
+          m.posT = clamp(Math.round(m.pos), 0, Math.max(0, this.host.workCount() - 1));
+          this.touch();
+          this.kick();
+          return;
         }
+        d.peeked = true;
+        this.magnify(true);
       }, LONG_PRESS_MS);
     }
     this.kick();
@@ -336,6 +365,10 @@ export class Controller {
       m.oy = m.oyT;
     }
     const d = this.drag;
+    if (d && d.id === e.pointerId) {
+      d.lx = e.clientX;
+      d.ly = e.clientY;
+    }
     if (d && d.id === e.pointerId && d.pan) {
       // 全屏且放大了：拖动平移画面（跟手：当前值和目标一起改），不切换作品、不退出全屏
       const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
@@ -424,6 +457,10 @@ export class Controller {
         if (d.from === -1 && (d.pull ?? 0) >= FS_PULL_ENTER) {
           // 放大时往上拉过门槛：进全屏（2026-11-18）
           this.setCamera({ zoomT: 0, magT: 1, fsT: 1 });
+        } else if (d.from === 1 && this.host.boardsGesture && boardPull(d.l0, d.ly - d.y0, this.vh) >= BOARD_PULL_ENTER) {
+          // 系列视图里继续往下拉过门槛：镜头回到系列视图，进入情绪板（2026-11-18）
+          this.setCamera({ zoomT: 1, magT: 0, fsT: 0 });
+          this.host.boardsGesture();
         } else {
           // 吸附到最近的一档：系列视图 / 单幅 / 放大查看（拉全屏没过门槛就弹回放大）
           const to = releaseLevel(d.samples, cameraLevel(m.zoomT, m.magT), d.from);
@@ -454,6 +491,11 @@ export class Controller {
     window.clearTimeout(this.restoreTimer);
     this.toggleFullscreen();
   };
+
+  /** 刚松手的这一下不算单击（拖起阵列松手后） */
+  suppressClick(): void {
+    this.dragEndAt = performance.now();
+  }
 
   // ───────────── 时间轴指示条拖动 ─────────────
 
@@ -511,6 +553,11 @@ export class Controller {
       this.apply(flipAction(a));
     } else if (a && a.kind === 'in' && this.magnified && !wheelCanToggleFullscreen(p)) {
       // 关掉了“滚轮进入 / 退出全屏”：放大时再往上滚不进全屏
+    } else if (a && a.kind === 'out' && this.inSeries && this.host.boardsGesture) {
+      // 系列视图里再往下滚：进入情绪板；这次滚动剩下的事件吞掉（2026-11-18）
+      this.wheelSwallowAt = now;
+      this.wheel.reset();
+      this.host.boardsGesture();
     } else if (a) {
       const from = this.targets();
       this.apply(a);
@@ -571,6 +618,8 @@ export class Controller {
       this.kick();
     } else if (a.kind === 'fullscreen') {
       this.toggleFullscreen();
+    } else if (a.kind === 'out' && this.inSeries && this.host.boardsGesture) {
+      this.host.boardsGesture();
     } else {
       this.setCamera(cameraStep(this.targets(), a.kind));
     }

@@ -156,3 +156,15 @@ describe('放大查看 / 全屏时的横向拖动（2026-11-17：之前太灵敏
     expect(releasePosition(pairs([[0, 3.15], [100, 3.2]]), 3.2, 12, 3)).toBe(3);
   });
 });
+
+describe('系列视图里继续往下拉：进入情绪板', () => {
+  it('从系列视图（档位 1）往下拉超过门槛才算', async () => {
+    const { boardPull, BOARD_PULL_ENTER } = await import('./gesture');
+    const vh = 900;
+    expect(boardPull(1, -50, vh)).toBe(0);
+    expect(boardPull(1, 30, vh)).toBeLessThan(BOARD_PULL_ENTER);
+    expect(boardPull(1, vh * 0.35 * 0.31, vh)).toBeGreaterThanOrEqual(BOARD_PULL_ENTER);
+    // 从单幅出发的这次拉到系列视图为止，不算
+    expect(boardPull(0, vh * 0.35, vh)).toBe(0);
+  });
+});

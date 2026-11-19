@@ -39,7 +39,9 @@ export function setRenameRow(s: SetInfo, finish: (commit: boolean, value: string
 }
 
 /** 原地确认删除：“删除「xxx」？只删除这个预览集……” + 取消 / 删除（取消按钮带 data-cancel，方便调用方放焦点） */
-export function setConfirmRow(s: SetInfo, cancel: () => void, confirm: () => void): HTMLElement {
+export function setConfirmRow(
+  s: SetInfo, cancel: () => void, confirm: () => void, texts: { title?: string; hint?: string } = {},
+): HTMLElement {
   const no = el('button', { type: 'button', class: 'menu-confirm-btn', role: 'menuitem', 'data-cancel': s.id }, [
     t('sets.cancel'),
   ]);
@@ -49,8 +51,8 @@ export function setConfirmRow(s: SetInfo, cancel: () => void, confirm: () => voi
   no.addEventListener('click', cancel);
   ok.addEventListener('click', confirm);
   return el('div', { class: 'menu-confirm', role: 'none' }, [
-    el('p', { class: 'menu-confirm-title' }, [t('sets.deleteConfirm', { name: s.name })]),
-    el('p', { class: 'menu-confirm-hint' }, [t('sets.deleteHint')]),
+    el('p', { class: 'menu-confirm-title' }, [texts.title ?? t('sets.deleteConfirm', { name: s.name })]),
+    el('p', { class: 'menu-confirm-hint' }, [texts.hint ?? t('sets.deleteHint')]),
     el('div', { class: 'menu-confirm-actions', role: 'none' }, [no, ok]),
   ]);
 }
@@ -59,12 +61,13 @@ export function setConfirmRow(s: SetInfo, cancel: () => void, confirm: () => voi
 export function setContextItems(
   s: SetInfo,
   act: { rename: () => void; duplicate: () => void; remove: () => void },
+  deleteLabel = t('ctx.deleteSet'),
 ): CtxItem[] {
   return [
     { caption: s.name },
     { label: t('ctx.renameSet'), icon: ICON_PENCIL, run: act.rename },
     { label: t('ctx.duplicateSet'), icon: ICON_COPY, run: act.duplicate },
     'divider',
-    { label: t('ctx.deleteSet'), icon: ICON_TRASH, danger: true, run: act.remove },
+    { label: deleteLabel, icon: ICON_TRASH, danger: true, run: act.remove },
   ];
 }

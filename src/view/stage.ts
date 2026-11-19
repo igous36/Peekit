@@ -86,6 +86,8 @@ export interface StageFrame {
   mag: number;
   /** 全屏程度 0–1：到 1 时深色底已经盖满窗口，玻璃网格整个隐藏（省掉所有背景模糊） */
   fs: number;
+  /** 被拖起（拖进情绪板，2026-11-18）的那幅：由拖起阵列的替身接替，这里按 alpha 淡出 / 淡回 */
+  lifted?: { id: string; alpha: number } | null;
 }
 
 export interface StageHandlers {
@@ -170,7 +172,8 @@ export class StageView {
     const btn = el('button', { type: 'button', class: cls, tabindex: -1 }, children);
     const slot: Slot = {
       node: new Styled(btn), canvas, shadowCenter, shadowSide,
-      workId: null, key: '', aspect: NaN, art: DEFAULT_ART, index: -1, shown: true,
+      // aspect 初值 −1：第一次填充一定会设卡片尺寸（没有宽高信息的作品 aspect 是 NaN，NaN 和 NaN 算相同）
+      workId: null, key: '', aspect: -1, art: DEFAULT_ART, index: -1, shown: true,
       anim, animSrc: null, animOn: false,
     };
     btn.addEventListener('click', () => {
@@ -314,7 +317,8 @@ export class StageView {
       collectSinker(p, sinkers);
       // 放大查看：中间那张交给放大层（这里隐藏），其他画作跟着淡出
       const mag = clamp(f.mag, 0, 1);
-      const opacity = mag > 0.001 ? (i === f.cur ? 0 : p.opacity * (1 - mag)) : p.opacity;
+      let opacity = mag > 0.001 ? (i === f.cur ? 0 : p.opacity * (1 - mag)) : p.opacity;
+      if (f.lifted && f.lifted.id === w.id) opacity *= clamp(f.lifted.alpha, 0, 1);
       if (opacity <= 0.001) {
         this.hide(slot);
         continue;

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { App } from './app';
 import type { Work } from './data/types';
+import { runBoardStress } from './perf-board';
 
 const info = (msg: string) => invoke('log_info', { msg }).catch(() => {});
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,6 +79,24 @@ async function record(app: App, intervals: number[], maxMs = 3000): Promise<void
     intervals.push(now - last);
     last = now;
   }
+}
+
+/** PEEKIT_PERF=board：等缩略图到位后只跑情绪板压测（见 perf-board.ts），然后关掉窗口 */
+export async function runBoardProbe(app: App): Promise<void> {
+  app.freezeSaving();
+  for (let i = 0; i < 100; i++) {
+    const ws = app.works;
+    if (ws.length && ws.every((w) => w.thumb || w.broken)) break;
+    await sleep(200);
+  }
+  info(`BOARD 作品 ${app.works.length} 幅`);
+  try {
+    await runBoardStress(app, info);
+  } catch (err) {
+    info(`BOARD 出错 ${String(err)}`);
+  }
+  await sleep(300);
+  await getCurrentWindow().close();
 }
 
 export async function runPerfProbe(app: App): Promise<void> {

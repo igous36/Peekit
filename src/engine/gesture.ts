@@ -139,5 +139,15 @@ export function fsPull(l0: number, dy: number, vh: number): number {
   return Math.max(0, -1 - (l0 + dy / (vh * ZOOM_DRAG_SPAN)));
 }
 
+// ───────────── 系列视图里继续往下拉：进入情绪板（2026-11-18） ─────────────
+
+/** 松手时超过系列视图这么多（档位单位，未加橡皮筋）就进入情绪板：约窗口高的 10%，和进全屏一样 */
+export const BOARD_PULL_ENTER = 0.3;
+
+/** 拖过系列视图那一档多少（档位单位，未加橡皮筋）；没拖过是 0 */
+export function boardPull(l0: number, dy: number, vh: number): number {
+  return Math.max(0, l0 + dy / (vh * ZOOM_DRAG_SPAN) - 1);
+}
+
 /** 拖动中全屏的预览（越拉越难拉，最多 FS_PREVIEW_MAX）；拉到 FS_PULL_ENTER 时约 0.25 */
 export const fsPreview = (pull: number): number => FS_PREVIEW_MAX * (1 - 1 / (1 + Math.max(0, pull) * 4));

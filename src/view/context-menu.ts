@@ -11,6 +11,8 @@ export interface CtxAction {
   /** 危险操作（移除、删除）：文字用强调样式 */
   danger?: boolean;
   disabled?: boolean;
+  /** 项尾的灰色小字（情绪板列表里的张数） */
+  trail?: string;
   run: () => void;
 }
 
@@ -30,6 +32,9 @@ export class ContextMenu {
   readonly root: HTMLElement;
   private open = false;
   private returnFocus: HTMLElement | null = null;
+  /** 关掉时调用：chosen = 是不是点了某一项（2026-11-18，拖进“加入现有情绪板”后选情绪板用） */
+  private onClose: ((chosen: boolean) => void) | null = null;
+  private chosen = false;
 
   constructor() {
     this.root = el('div', { class: 'ctx-menu menu-panel', role: 'menu', hidden: true });
@@ -52,7 +57,7 @@ export class ContextMenu {
   }
 
   /** 在 (x, y) 打开；label 给读屏软件用 */
-  show(items: CtxItem[], x: number, y: number, label: string): void {
+  show(items: CtxItem[], x: number, y: number, label: string, onClose?: (chosen: boolean) => void): void {
     const nodes: HTMLElement[] = [];
     for (const it of items) {
       if (it === 'divider') nodes.push(el('div', { class: 'menu-divider', role: 'separator' }));
@@ -66,7 +71,18 @@ export class ContextMenu {
       const next = arr[i + 1];
       return !!prev && !prev.classList.contains('menu-divider') && !!next;
     });
-    if (!cleaned.some((n) => n.getAttribute('role') === 'menuitem')) return;
+    if (!cleaned.some((n) => n.getAttribute('role') === 'menuitem')) {
+      onClose?.(false);
+      return;
+    }
+    // 开着的菜单被新的替换：旧的算“没选”
+    if (this.open && this.onClose) {
+      const cb = this.onClose;
+      this.onClose = null;
+      cb(false);
+    }
+    this.onClose = onClose ?? null;
+    this.chosen = false;
 
     this.returnFocus = this.open ? this.returnFocus : (document.activeElement as HTMLElement | null);
     this.root.replaceChildren(...cleaned);
@@ -96,6 +112,9 @@ export class ContextMenu {
     this.root.classList.remove('is-shown');
     this.root.hidden = true;
     this.root.replaceChildren();
+    const cb = this.onClose;
+    this.onClose = null;
+    cb?.(this.chosen);
     const back = this.returnFocus;
     this.returnFocus = null;
     if (restoreFocus && back && document.contains(back)) back.focus({ preventScroll: true });
@@ -104,6 +123,7 @@ export class ContextMenu {
   private item(a: CtxAction): HTMLElement {
     const children: Node[] = [el('span', { class: 'menu-lead' }, a.icon ? [svgIcon(a.icon, 16)] : [])];
     children.push(el('span', { class: 'menu-label' }, [a.label]));
+    if (a.trail) children.push(el('span', { class: 'menu-count' }, [a.trail]));
     const b = el('button', {
       type: 'button',
       class: `menu-item${a.danger ? ' menu-item--danger' : ''}`,
@@ -114,6 +134,7 @@ export class ContextMenu {
       b.setAttribute('aria-disabled', 'true');
     }
     b.addEventListener('click', () => {
+      this.chosen = true;
       this.close(true);
       a.run();
     });

@@ -67,6 +67,8 @@ export interface InfoHandlers {
   cancel?: () => void;
   /** 右键系列（编辑态的芯片、展示态的系列标签）；x / y 是菜单位置 */
   seriesMenu?: (seriesId: string, x: number, y: number) => void;
+  /** 展示态的系列标签按下（2026-11-18：拖出去就把整个系列拖进情绪板） */
+  seriesDrag?: (e: PointerEvent, chip: HTMLElement) => void;
 }
 
 interface Chip {
@@ -148,7 +150,10 @@ export class InfoPanel {
     const title = el('h1', { class: 'info-title' });
     const date = el('p', { class: 'info-date' });
     const source = el('p', { class: 'info-source' });
-    const seriesTag = el('span', { class: 'chip' }, [dot, chipName]);
+    const seriesTag = el('span', { class: 'chip chip--drag', 'data-i18n-title': 'board.dragSeries' }, [dot, chipName]);
+    seriesTag.addEventListener('pointerdown', (e) => {
+      if (this.viewSeriesId) this.handlers.seriesDrag?.(e, seriesTag);
+    });
     // 右键展示态的系列标签：删除系列
     seriesTag.addEventListener('contextmenu', (e) => {
       if (!this.viewSeriesId) return;

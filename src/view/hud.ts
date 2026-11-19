@@ -128,6 +128,7 @@ export class Hud {
       el('span', { 'data-i18n': 'hint.browse' }),
       el('span', { 'data-i18n': 'hint.zoom' }),
       el('span', { 'data-i18n': 'hint.magnify' }),
+      el('span', { 'data-i18n': 'hint.lift' }),
     ]);
     this.hintEl = new Styled(this.hint);
 
