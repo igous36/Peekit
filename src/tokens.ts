@@ -259,6 +259,22 @@ export const spring = {
   boardOpen: [200, 26],
 } as const;
 
+/**
+ * 手写字标的书写动画（进出情绪板时，HANDOFF §6）。单位 ms。
+ * 旧字标跟着情绪板一起淡出（boardOpen 弹簧约 0.2s 淡到八成），等 delay 后新字标按笔顺写出来；
+ * 每一笔 [开始, 时长] 按笔画长度定，笔速一致（每 1000 viewBox 单位约 0.55s）。
+ */
+export const wordmarkWrite = {
+  delay: 200,
+  ease: 'cubic-bezier(0.42, 0, 0.38, 1)',
+  /** t 的横 */
+  crossEase: 'ease-out',
+  /** i 的点：从 0.2 倍弹到 1 倍 */
+  dotEase: 'cubic-bezier(0.3, 1.6, 0.5, 1)',
+  peekit: { main: [0, 1050], dot: [1080, 200], cross: [1180, 200] },
+  moodBoards: { mood: [0, 540], boards: [590, 660] },
+} as const;
+
 /** 舞台尺寸，单位 u = min(1vh, 0.6vw)，HANDOFF §2 */
 export const stage = {
   /** 4:5 画作的卡片尺寸；其他比例保持同样面积，再限制在 artMaxW × artMaxH 之内（2026-11-17 决定卡片跟随画作比例） */

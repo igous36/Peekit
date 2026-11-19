@@ -47,6 +47,7 @@ import {
 } from '../../data/boards';
 import { spring } from '../../tokens';
 import { prefs, wheelCanToggleFullscreen } from '../../prefs';
+import { markSvg, MOOD_BOARDS, WORDMARK_HEIGHT, writeMark } from '../wordmark';
 
 const ICON_OPTIMIZE = ['M4 4h7v7H4z', 'M13 4h7v4h-7z', 'M13 10h7v10h-7z', 'M4 13h7v7H4z'];
 const ICON_FIT = ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'];
@@ -162,6 +163,8 @@ export class BoardView {
   private guideLines: SVGLineElement[] = [];
   private marquee: Styled;
   private bar: HTMLElement;
+  /** 顶栏最左边的手写字标「Mood boards」（替换预览里的 Peekit） */
+  private mark: SVGSVGElement;
   private titleBtn: HTMLButtonElement;
   private titleText: Styled;
   private countText: Styled;
@@ -256,7 +259,10 @@ export class BoardView {
       const r = this.titleBtn.getBoundingClientRect();
       this.host.rename(r.left, r.bottom + 8);
     });
-    this.bar = el('div', { class: 'board-bar' }, [back, el('span', { class: 'board-bar-sep', 'aria-hidden': 'true' }), this.titleBtn]);
+    this.mark = markSvg(MOOD_BOARDS, WORDMARK_HEIGHT, 'board-mark');
+    this.bar = el('div', { class: 'board-bar' }, [
+      this.mark, back, el('span', { class: 'board-bar-sep', 'aria-hidden': 'true' }), this.titleBtn,
+    ]);
     const zt = el('span');
     this.zoomText = new Styled(zt);
     this.zoomBtn = el('button', { type: 'button', class: 'board-zoom', 'data-i18n-title': 'board.fit' }, [svgIcon(ICON_FIT, 14), zt]);
@@ -356,6 +362,8 @@ export class BoardView {
       // 照片按离屏幕中心的距离依次浮现；视野里照片太多时不逐张浮现（整个画布一起淡入）
       const vis = this.order.filter((n) => n.shown);
       if (vis.length <= STAGGER_MAX) this.staggerAppear(vis, 40);
+      // Peekit 跟着舞台一起被情绪板盖住淡出，然后 Mood boards 按笔顺写出来
+      writeMark(this.mark, MOOD_BOARDS);
     }
     this.op.t = 1;
     if (focusItem) {

@@ -3242,7 +3242,13 @@ button:focus-visible {
   z-index: 2;
 }
 
-/* 顶栏：‹ 预览 | 名字 张数（和字标在同一个位置） */
+/* 顶栏：手写字标 Mood boards · ‹ 预览 | 名字 张数（和预览里的字标一行在同一个位置） */
+.board-mark {
+  display: block;
+  flex-shrink: 0;
+  margin-right: 6px;
+}
+
 .board-bar {
   position: absolute;
   left: 64px;

@@ -749,6 +749,8 @@ export class App {
   }
 
   private closeBoard = (): void => {
+    // Mood boards 跟着情绪板一起淡出，Peekit 再按笔顺写回来
+    if (this.boardView.isOpen) this.hud.writeWordmark();
     this.boardView.close();
     // 舞台马上恢复可见（不等情绪板淡出完），焦点才能交还给它
     this.boardCover = false;
@@ -774,6 +776,8 @@ export class App {
   private deleteBoard = (id: string): void => {
     const i = this.boards.data.boards.findIndex((b) => b.id === id);
     if (this.boardView.board?.id === id) {
+      // 正开着的情绪板被删掉：情绪板直接消失，Peekit 马上开始写
+      if (this.boardView.isOpen) this.hud.writeWordmark(0);
       this.boardView.detach();
     }
     const gone = deleteBoard(this.boards.data, id);

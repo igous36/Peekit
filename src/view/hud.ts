@@ -3,10 +3,7 @@ import { r3 } from '../engine/math';
 import { t } from '../i18n';
 import { el, svgIcon, ICON_NEXT, ICON_PENCIL, ICON_PREV, Styled } from './dom';
 import { Counter } from './counter';
-import { wordmarkSvg } from './wordmark';
-
-/** 标题栏手写字标的高度（px）：和原来 15px 文字字标的视觉分量相当，小写字母约 10px 高 */
-const WORDMARK_HEIGHT = 26;
+import { markSvg, PEEKIT, WORDMARK_HEIGHT, writeMark } from './wordmark';
 
 export interface HudFrame {
   cur: number;
@@ -46,6 +43,8 @@ export class Hud {
   readonly live: HTMLElement;
   /** 左上角的计数：主题色圆环 / 文字（2026-11-18，counter.ts） */
   readonly counter: Counter;
+  /** 手写字标「Peekit」 */
+  private mark: SVGSVGElement;
 
   private meterEl: Styled;
   private meterFill: Styled;
@@ -70,8 +69,9 @@ export class Hud {
     // 2026-11-18：Peekit 从文字换成手写字标 SVG（view/wordmark.ts）
     this.counter = new Counter();
     this.setSlot = el('span', { class: 'wordmark-slot' });
+    this.mark = markSvg(PEEKIT, WORDMARK_HEIGHT, 'wordmark-name');
     this.wordmark = el('div', { class: 'wordmark' }, [
-      wordmarkSvg(WORDMARK_HEIGHT, 'wordmark-name'),
+      this.mark,
       this.setSlot,
       this.counter.root,
     ]);
@@ -134,6 +134,11 @@ export class Hud {
 
     this.live = el('div', { class: 'sr-only', 'aria-live': 'polite' });
     this.liveEl = new Styled(this.live);
+  }
+
+  /** 从情绪板回到预览：等情绪板（连同 Mood boards 字标）淡出，Peekit 按笔顺写出来 */
+  writeWordmark(delay?: number): void {
+    writeMark(this.mark, PEEKIT, delay);
   }
 
   render(f: HudFrame): void {
