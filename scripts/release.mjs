@@ -14,9 +14,9 @@
 //   src-tauri/target/release/bundle/latest.json
 // 应用读的是 releases/latest/download/latest.json，所以新版本要设成 Latest。
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -47,8 +47,19 @@ if (!args.includes('--skip-build')) {
   }
   env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= '';
   env.CARGO_BUILD_JOBS ??= '4';
+  const configs = ['--config', 'src-tauri/tauri.updater.conf.json'];
+  // MSI 的版本号只能是数字（major.minor.patch.build），0.2.0-beta.1 这种测试版要单独给它一个：取预发布号末尾的数字当第四段
+  const pre = /^(\d+\.\d+\.\d+)-(?:.*?)(\d+)?$/.exec(version);
+  if (pre) {
+    const wixConf = join(root, 'src-tauri', 'target', 'wix-version.conf.json');
+    mkdirSync(dirname(wixConf), { recursive: true });
+    const wixVersion = `${pre[1]}.${pre[2] ?? 0}`;
+    writeFileSync(wixConf, JSON.stringify({ bundle: { windows: { wix: { version: wixVersion } } } }));
+    configs.push('--config', wixConf);
+    console.log(`测试版：MSI 版本号用 ${wixVersion}`);
+  }
   console.log(`打包 Peekit ${version}（带更新签名）…`);
-  const r = spawnSync('npx', ['tauri', 'build', '--config', 'src-tauri/tauri.updater.conf.json'], {
+  const r = spawnSync('npx', ['tauri', 'build', ...configs], {
     cwd: root,
     env,
     stdio: 'inherit',

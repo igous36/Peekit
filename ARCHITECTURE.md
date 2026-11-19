@@ -124,6 +124,8 @@ scripts/bench-board.ts  情绪板几何算法的压测
 1. 改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号。
 2. 运行 `npm run release`，它会签名打包，并生成 `src-tauri/target/release/bundle/latest.json`。
 3. 把 NSIS 安装包、MSI 和 `latest.json` 传到 GitHub Release，并设为 Latest。
+
+测试版（版本号像 `0.2.0-beta.1`）：MSI 的版本号只能是数字，`npm run release` 会另给 MSI 一个 `0.2.0.1` 这样的版本号（取预发布号末尾的数字）。测试版的 Release 标成预发布，不设 Latest，所以装了正式版的人不会被自动更新到测试版。
 不需要更新签名时，`npm run tauri build` 照常能用。
 
 ## 测试和调试
