@@ -2258,6 +2258,229 @@ button:focus-visible {
   }
 }
 
+/* ───────────── 新旧对比（2026-11-20，view/compare.ts） ─────────────
+   整页深色底（和全屏同一个颜色），顶部正中一个分段开关（并排 / 分割 / 叠加），右上角互换和关闭，
+   底部正中“相隔 1 年 3 个月”；叠加时下面多一根透明度滑条。界面元素都用全屏深色底上的那套颜色 */
+.compare {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--color-fullscreen-bg);
+  color: var(--color-on-dark-strong);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  user-select: none;
+}
+
+.compare.is-open {
+  opacity: 1;
+}
+
+.app.is-comparing .window-controls {
+  z-index: 21;
+}
+
+.cmp-bar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.cmp-modes {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cmp-mode {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-on-dark);
+  font: 500 13px/1 var(--font-family-sans);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.cmp-mode:hover {
+  color: var(--color-on-dark-strong);
+}
+
+.cmp-mode[aria-checked='true'] {
+  background: var(--color-on-dark-strong);
+  color: var(--color-on-dark-ink);
+}
+
+.cmp-tools {
+  position: absolute;
+  top: 12px;
+  right: 164px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+}
+
+.cmp-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-on-dark);
+  cursor: pointer;
+}
+
+.cmp-icon:hover {
+  background: var(--color-window-btn-hover-dark);
+  color: var(--color-on-dark-strong);
+}
+
+.cmp-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.cmp-frame {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.compare[data-mode='split'] .cmp-frame,
+.compare[data-mode='overlay'] .cmp-frame {
+  border-radius: 0;
+}
+
+.compare[data-mode='split'] .cmp-stage,
+.compare.is-splitting {
+  cursor: ew-resize;
+}
+
+.compare.is-panning {
+  cursor: grabbing;
+}
+
+.cmp-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+}
+
+.cmp-zoom .art-canvas {
+  border-radius: 0;
+}
+
+.cmp-zoom .art-canvas > img {
+  object-fit: contain;
+}
+
+.cmp-divider {
+  position: absolute;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--color-on-dark-strong);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  display: none;
+}
+
+.compare[data-mode='split'] .cmp-divider {
+  display: block;
+}
+
+.cmp-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border-radius: 50%;
+  background: var(--color-on-dark-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.cmp-handle::before,
+.cmp-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin-top: -5px;
+  border: 5px solid transparent;
+}
+
+.cmp-handle::before {
+  left: 6px;
+  border-right-color: var(--color-on-dark-ink);
+}
+
+.cmp-handle::after {
+  right: 6px;
+  border-left-color: var(--color-on-dark-ink);
+}
+
+.cmp-caption {
+  position: absolute;
+  margin: 0;
+  font: var(--font-caption);
+  color: var(--color-text-on-dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmp-foot {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmp-gap {
+  margin: 0;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  font: 500 13px/1 var(--font-family-sans);
+  color: var(--color-on-dark-strong);
+}
+
+.cmp-gap:empty {
+  display: none;
+}
+
+.cmp-slider-wrap {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  font: var(--font-caption);
+  color: var(--color-text-on-dark);
+}
+
+.compare[data-mode='overlay'] .cmp-slider-wrap {
+  display: flex;
+}
+
+.cmp-slider {
+  width: 220px;
+  accent-color: var(--color-accent);
+}
+
 /* ───────────── 删除确认框（2026-11-20，confirm-dialog.ts） ─────────────
    屏幕中央，和关于对话框同一套遮罩、白卡、按钮；只有一句“删除「xxx」？”和取消 / 删除。
    删除按钮用墨色实心（不用红色，保持只有一个强调色） */

@@ -32,7 +32,7 @@ import {
 } from './updater';
 import { onPrefsChange, prefs } from './prefs';
 import {
-  svgIcon, ICON_CLOSE, ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
+  svgIcon, ICON_CLOSE, ICON_COMPARE, ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
 } from './view/dom';
 import { clampRating, filterByRating, passes, ratingFromKey, toggleRating, viewIndexOf } from './engine/rating';
 import { CHECK_KEYS, CHECK_KINDS, NO_CHECKS, anyCheck, checkFromKey, toggleCheck, type CheckKind, type CheckState } from './engine/checks';
@@ -46,6 +46,8 @@ import { sampleImage, sampleSvg } from './data/palette-loader';
 import { Palette } from './view/palette';
 import { ConfirmDialog } from './view/confirm-dialog';
 import { CalendarView } from './view/calendar';
+import { CompareViewer } from './view/compare';
+import { pairWorks, partnerOf, unpair } from './engine/compare';
 import { drawYearPoster } from './view/year-poster';
 import type { YearStats } from './engine/calendar';
 import type { SearchItem } from './engine/search';
@@ -166,6 +168,8 @@ export class App {
   private confirmDialog: ConfirmDialog;
   /** 创作年历（2026-11-20） */
   private calendar: CalendarView;
+  /** 新旧对比（2026-11-20） */
+  private compare: CompareViewer;
   /** 筛选时编辑卡的系列芯片按全部作品算（被筛掉的作品所在的系列也要能选） */
   private usedSeries: Set<string> | null = null;
   private usedFor: readonly Work[] | null = null;
@@ -314,6 +318,10 @@ export class App {
       seriesMenu: (id, x, y) => this.openSeriesMenu(id, x, y),
       seriesDrag: (e, chip) => this.onSeriesChipDown(e, chip),
       rate: (n) => this.rate(n, false),
+      compare: () => {
+        const w = this.target();
+        if (w) this.openCompareFor(w);
+      },
     });
     this.timeline = new Timeline({
       go: (i) => ctl.go(i),
@@ -356,6 +364,12 @@ export class App {
     this.ctxMenu = new ContextMenu();
     // 删除预览集 / 情绪板的确认框（2026-11-20，屏幕中央）
     this.confirmDialog = new ConfirmDialog();
+    // 新旧对比（2026-11-20）：整页深色
+    this.compare = new CompareViewer({
+      thumb: (w) => (w.broken ? undefined : w.thumb),
+      original: (w) => this.originalUrl(w),
+      close: () => this.closeCompare(),
+    });
     // 创作年历（2026-11-20）：整页，统计的是当前预览集的全部作品（不受筛选影响）
     this.calendar = new CalendarView({
       works: () => this.full.works,
@@ -544,6 +558,7 @@ export class App {
       this.timeline.root,
       this.boardView.root,
       this.calendar.root,
+      this.compare.root,
       this.toast.root,
       this.checkBar.root,
       this.zoomBadge,
@@ -689,7 +704,10 @@ export class App {
   }
 
   blockKeys(): boolean {
-    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen || this.calendar.isOpen;
+    return (
+      this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen ||
+      this.calendar.isOpen || this.compare.isOpen
+    );
   }
 
   /** 舞台中间那幅卡片在屏幕上的位置 */
@@ -1803,6 +1821,102 @@ export class App {
     return swatchesOf(px);
   }
 
+  // ───────────── 原图地址（对比、置顶小窗、导出共用） ─────────────
+
+  /** 一幅作品的原图（TIFF / RAW 是显示用大图）；示例数据、读不了返回 null */
+  private async originalUrl(w: Work): Promise<string | null> {
+    if (!w.path || w.broken) return null;
+    if (imageKind(w.path) === 'convert') {
+      const { mtime, size } = this.service.fileInfo(w.id);
+      return assetUrl(await makeDisplay(w.path, mtime, size, false));
+    }
+    return assetUrl(w.path);
+  }
+
+  // ───────────── 新旧对比（2026-11-20） ─────────────
+
+  /** id → 作品（全部作品），作品列表换了才重建；每帧判断信息卡要不要显示“对比”按钮也用它 */
+  private worksById(): Map<string, Work> {
+    if (this.idMapFor !== this.full.works) {
+      this.idMap = new Map(this.full.works.map((w) => [w.id, w]));
+      this.idMapFor = this.full.works;
+    }
+    return this.idMap;
+  }
+
+  private idMap = new Map<string, Work>();
+  private idMapFor: readonly Work[] | null = null;
+
+  /** 这一幅的搭档 */
+  private partner(w: Work): Work | null {
+    return w.pair ? partnerOf(this.worksById(), w) : null;
+  }
+
+  private partnerCached(w: Work): boolean {
+    return !!this.partner(w);
+  }
+
+  /** 有搭档就打开对比，没有就先挑一幅 */
+  openCompareFor(w: Work): void {
+    const p = this.partner(w);
+    if (p) this.showCompare(w, p);
+    else this.pickPartner(w);
+  }
+
+  private showCompare(a: Work, b: Work): void {
+    if (this.ui.editing) this.finishEdit();
+    if (this.controller.fullscreen) this.controller.toggleFullscreen();
+    this.root.classList.add('is-comparing');
+    this.compare.show(a, b);
+  }
+
+  private closeCompare(): void {
+    if (!this.compare.isOpen) return;
+    this.compare.hide();
+    this.root.classList.remove('is-comparing');
+    const a = document.activeElement;
+    if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
+    this.controller.kick();
+  }
+
+  /**
+   * 挑一幅来和 w 对比：用命令面板，没输入时先列同系列的（离 w 的日期最远的在前，多半是重画的那一版），
+   * 输入后搜全部作品。挑好就配成一对、存下来、打开对比
+   */
+  private pickPartner(w: Work): void {
+    const item = (o: Work): SearchItem => ({
+      kind: 'work',
+      label: displayTitle(o),
+      sub: [o.date || t('date.unknown'), displayName(this.seriesOf(o))].join(' · '),
+      keywords: o.fileName ?? '',
+      run: () => {
+        pairWorks(this.worksById(), w, o);
+        this.persistSoon();
+        this.controller.kick();
+        this.showCompare(w, o);
+        this.toast.show(t('compare.paired'));
+      },
+    });
+    const others = this.full.works.filter((o) => o !== w);
+    const ts = w.ts ?? 0;
+    const sameSeries = others
+      .filter((o) => o.series === w.series)
+      .sort((a, b) => Math.abs((b.ts ?? 0) - ts) - Math.abs((a.ts ?? 0) - ts))
+      .slice(0, 40);
+    this.cmdPalette.open({
+      initial: sameSeries.map(item),
+      all: () => others.map(item),
+      placeholder: t('compare.pick', { title: displayTitle(w) }),
+    });
+  }
+
+  private unpairWork(w: Work): void {
+    unpair(this.worksById(), w);
+    this.persistSoon();
+    this.controller.kick();
+    this.toast.show(t('compare.unpaired'));
+  }
+
   // ───────────── 创作年历（2026-11-20） ─────────────
 
   openCalendar(): void {
@@ -1967,6 +2081,13 @@ export class App {
     add(act(t('sets.new').replace(/^\+\s*/, ''), this.newSet, { keywords: 'new collection set' }));
     add(act(t('board.new'), this.newBoard, { keywords: 'new mood board' }));
     add(act(t('calendar.title'), () => this.openCalendar(), { keywords: 'calendar year review heatmap stats' }), true);
+    // 新旧对比（2026-11-20）：当前这一幅
+    const cur = this.target();
+    if (cur) {
+      const p = this.partner(cur);
+      if (p) add(act(t('compare.openWith', { title: displayTitle(p) }), () => this.showCompare(cur, p), { keywords: 'compare redraw before after' }), true);
+      add(act(t('compare.pickMenu'), () => this.pickPartner(cur), { keywords: 'compare redraw before after pair' }));
+    }
     add(act(t('about.menu'), () => void this.about.open(), { keywords: 'about version update' }));
     return out;
   }
@@ -2047,6 +2168,12 @@ export class App {
       if (w.raw) items.push({ label: t('ctx.saveRawAs'), icon: ICON_DOWNLOAD, run: saveAs(w.raw) });
       items.push({ label: t('ctx.reveal'), icon: ICON_FOLDER, run: () => void revealInFolder(file).catch(fail) }, 'divider');
     }
+    // 新旧对比（2026-11-20）
+    const p = this.partner(w);
+    if (p) items.push({ label: t('compare.openWith', { title: displayTitle(p) }), icon: ICON_COMPARE, run: () => this.showCompare(w, p) });
+    items.push({ label: t('compare.pickMenu'), icon: ICON_COMPARE, run: () => this.pickPartner(w) });
+    if (p) items.push({ label: t('compare.unpair'), icon: ICON_REMOVE, run: () => this.unpairWork(w) });
+    items.push('divider');
     items.push({ label: t('ctx.removeWork'), icon: ICON_TRASH, danger: true, run: () => this.removeWorkAt(index) });
     this.ctxMenu.show(items, x, y, t('ctx.label', { name: displayTitle(w) }));
   }
@@ -2369,7 +2496,10 @@ export class App {
     }
     // 当前作品在系列里的序号（系列成员按时间先后排好的下标，二分查找）
     const index = Math.max(0, sortedIndexOf(series, cur)) + 1;
-    this.info.render({ work: wc, series: sc, count: series.length, index, frac, zoom: zc, edit, interactive: mag <= 0.5 });
+    this.info.render({
+      work: wc, series: sc, count: series.length, index, frac, zoom: zc, edit, interactive: mag <= 0.5,
+      paired: !!wc.pair && this.partnerCached(wc),
+    });
     this.timeline.render({
       works, cur, pos: m.pos, vel: m.posV, labelsVersion: this.labelsVersion, members: series,
       // 同系列刻度用系列的主题色高亮；未归类保持原来的灰色（2026-11-18）

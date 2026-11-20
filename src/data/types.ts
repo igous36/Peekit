@@ -48,6 +48,8 @@ export interface Work {
   rating?: number;
   /** 主色组成（2026-11-20，按颜色筛选用，engine/swatches.ts）；还没分析过就没有 */
   swatches?: { hex: string; share: number }[];
+  /** 新旧对比的搭档（2026-11-20）：另一幅的 id，两边互相指着（engine/compare.ts） */
+  pair?: string;
 }
 
 export interface Library {

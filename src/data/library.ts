@@ -42,6 +42,8 @@ export interface SavedWork {
   rating?: number;
   /** 主色组成（2026-11-20）：[[#RRGGBB, 占比], …]；文件改过（修改时间或大小变了）就作废重算 */
   swatches?: [string, number][];
+  /** 新旧对比的搭档（2026-11-20）：另一幅的文件路径 */
+  pair?: string;
 }
 
 export interface SavedLibrary {
@@ -239,6 +241,7 @@ export function mergeScan(
     const rating = clampRating(prev?.rating);
     if (rating) w.rating = rating;
     if (swatches) w.swatches = swatches;
+    if (typeof prev?.pair === 'string') w.pair = prev.pair;
     // RAW + JPG 合并成一幅时，同名 RAW 原片的路径（每次扫描都重新配对，不存盘）
     if (it.raw) w.raw = it.raw;
     works.push(w);
@@ -259,6 +262,7 @@ export function applyToSample(lib: Library, saved: SavedLibrary): void {
     if (sw.customTitle) w.customTitle = sw.customTitle;
     const rating = clampRating(sw.rating);
     if (rating) w.rating = rating;
+    if (typeof sw.pair === 'string') w.pair = sw.pair;
   }
 }
 
@@ -274,6 +278,8 @@ export function updateSaved(saved: SavedLibrary, lib: Library): void {
     if (rating) next.rating = rating;
     else delete next.rating;
     if (w.swatches?.length) next.swatches = packSwatches(w.swatches);
+    if (w.pair) next.pair = w.pair;
+    else delete next.pair;
     if (w.path && w.bg !== color['color-chip']) next.color = w.bg;
     saved.works[w.id] = next;
   }

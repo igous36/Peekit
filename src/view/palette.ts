@@ -30,6 +30,8 @@ export interface PaletteSource {
   initial: SearchItem[];
   /** 能搜到的全部；作品很多时第一次输入才建（见 App.openPalette） */
   all: () => SearchItem[];
+  /** 输入框的提示（2026-11-20：挑一幅来对比时换成“选一幅来对比”）；不给就是默认的 */
+  placeholder?: string;
 }
 
 export class Palette {
@@ -85,6 +87,9 @@ export class Palette {
     this.prepared = null;
     this.root.hidden = false;
     this.input.value = '';
+    const hint = source.placeholder ?? t('palette.placeholder');
+    this.input.placeholder = hint;
+    this.input.setAttribute('aria-label', hint);
     this.update();
     void this.panel.offsetWidth;
     this.root.classList.add('is-open');

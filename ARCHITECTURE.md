@@ -55,11 +55,12 @@ src/
   engine/          纯函数，都有单测：弹簧、画作映射、玻璃避让、手势、滚轮档位、全屏缩放、
                    放大框、时间轴刻度、取主题色、月份、情绪板几何（board-layout）、网格空间索引（box-grid）、
                    拖起阵列（picker）、星级和按星筛选（rating）、主色组成和按颜色筛选（swatches）、
-                   时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）、创作年历统计（calendar）
+                   时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）、创作年历统计（calendar）、
+                   新旧对比的配对和同步缩放（compare）
   view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器、关于对话框、
                    拖起阵列（board-picker.ts）、情绪板画布（board/）、星星（stars.ts）、
                    自检工具条（check-bar.ts）、命令面板（palette.ts）、创作年历（calendar.ts）和
-                   它导出的年度回顾图（year-poster.ts）……
+                   它导出的年度回顾图（year-poster.ts）、新旧对比（compare.ts）……
   data/            作品库模型、保存、导入和扫描、缩略图队列、取色队列、Rust 调用、
                    情绪板（boards.ts 数据和增删改，board-store.ts 保存）
   locales/         除中文和英文以外的 10 种界面语言
@@ -88,6 +89,8 @@ scripts/bench-board.ts  情绪板几何算法的压测
 ## 作品库和保存
 
 作品库存在应用数据目录（`app.peekit`）的 `library.json` 里，用 tauri-plugin-store 读写，key 是 `sets`。格式是 v3：一组预览集，每个预览集有自己的导入来源、系列、按文件路径记的归属、自定义标题、星级（`rating`，1–5，没打星就没有这个字段）、主色和扫描缓存（`src/data/library.ts`、`src/data/sets.ts`）。旧版的 `library` key 只在启动时读一次，迁移成第一个预览集。
+
+新旧对比的配对也存在作品上（`pair`，另一幅的路径，两边互相指着）；对方被移除或指着别人时当作没有配对。
 
 每幅作品还可以带主色组成（`swatches`，[[#RRGGBB, 占比], …]，按颜色筛选用）。平时浏览时计数圆环取主题色抓到像素，顺手算掉当前这幅；第一次按颜色筛选时由 `data/color-index.ts` 把没算过的补齐（最多同时 3 幅，没有缩略图的先生成）。文件改过（修改时间或大小变了）重新扫描时作废。
 

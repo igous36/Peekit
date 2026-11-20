@@ -16,7 +16,7 @@ import { SERIES_NAME_MAX, TITLE_MAX, displayName, displayTitle } from '../data/s
 import { t } from '../i18n';
 import { r3 } from '../engine/math';
 import { infoSlide } from '../engine/mapping';
-import { el, svgIcon, ICON_CHEVRON_DOWN, ICON_PENCIL, Styled } from './dom';
+import { el, svgIcon, ICON_CHEVRON_DOWN, ICON_COMPARE, ICON_PENCIL, Styled } from './dom';
 import { menuPoint } from './context-menu';
 import { StarRow } from './stars';
 
@@ -56,6 +56,8 @@ export interface InfoFrame {
   zoom: number;
   /** 信息卡现在能不能点（放大时淡出就不能）：星星跟着决定能不能被 Tab 到 */
   interactive: boolean;
+  /** 这一幅有新旧对比的搭档：显示“对比”按钮 */
+  paired: boolean;
   /** 不为 null 时显示编辑态 */
   edit: EditFrame | null;
 }
@@ -76,6 +78,8 @@ export interface InfoHandlers {
   seriesDrag?: (e: PointerEvent, chip: HTMLElement) => void;
   /** 点了第 n 颗星（2026-11-20）：再点同一颗是清除，由 App 判断 */
   rate?: (n: number) => void;
+  /** 打开这一幅和它搭档的对比（2026-11-20） */
+  compare?: () => void;
 }
 
 interface Chip {
@@ -116,6 +120,7 @@ export class InfoPanel {
   readonly root: HTMLElement;
   /** 展示态的铅笔按钮：编辑完成后焦点回到这里 */
   readonly editButton: HTMLButtonElement;
+  private compareButton: HTMLButtonElement;
 
   private viewBlock: HTMLElement;
   private slide: Styled;
@@ -176,8 +181,13 @@ export class InfoPanel {
       size: 15,
       cls: 'info-stars',
     });
+    // 新旧对比（2026-11-20）：这一幅配过对时，铅笔左边多一个“对比”按钮
+    this.compareButton = el('button', {
+      type: 'button', class: 'icon-btn info-compare', hidden: true, 'data-i18n-aria': 'compare.open', 'data-i18n-title': 'compare.open',
+    }, [svgIcon(ICON_COMPARE, 16)]);
+    this.compareButton.addEventListener('click', () => this.handlers.compare?.());
     const slide = el('div', { class: 'info-slide' }, [
-      el('div', { class: 'info-head' }, [seriesTag, this.editButton]),
+      el('div', { class: 'info-head' }, [seriesTag, el('span', { class: 'info-actions' }, [this.compareButton, this.editButton])]),
       title,
       date,
       source,
@@ -327,6 +337,7 @@ export class InfoPanel {
     this.source.set('display', src ? 'block' : 'none');
     this.stars.set(w.rating ?? 0);
     this.stars.setTabbable(f.interactive);
+    if (this.compareButton.hidden === f.paired) this.compareButton.hidden = !f.paired;
     // 2026-11-18：原来是“同系列 n 幅”，改成“当前在系列里的序号 / 系列总幅数”；完整说法给读屏、悬停时显示
     this.count.text(`${f.index} / ${f.count}`);
     const pos = t('info.seriesPos', { i: f.index, n: f.count });

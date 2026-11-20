@@ -71,6 +71,8 @@ export const ICON_LAYERS = ['M12 3 3 8l9 5 9-5Z', 'M3 13l9 5 9-5'];
 export const ICON_BOARD = ['M4 4h7v9H4z', 'M13 4h7v5h-7z', 'M13 11h7v9h-7z', 'M4 15h7v5H4z'];
 export const ICON_IMAGE = ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9h.01'];
 export const ICON_BOLT = ['M13 3 5 13.5h6L10 21l8-10.5h-6Z'];
+/** 新旧对比（2026-11-20）：两个框，中间一条竖线 */
+export const ICON_COMPARE = ['M3 5h7v14H3z', 'M14 5h7v14h-7z', 'M12 3v18'];
 /** 创作年历（2026-11-20） */
 export const ICON_CALENDAR = ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4', 'M8 14h2', 'M14 14h2', 'M8 17h2'];
 
