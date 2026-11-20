@@ -71,6 +71,76 @@ pub async fn save_image_as(app: AppHandle, path: String) -> Result<Option<String
     .map_err(|e| e.to_string())?
 }
 
+/// 导出（2026-11-20，年度回顾、长图、PDF 作品集）：前端生成好的文件内容走原始字节（不经过 JSON），
+/// 默认文件名放在请求头 x-file-name（URL 编码）。弹系统保存对话框（默认在“图片”文件夹），写到用户选的位置。
+/// 返回保存到的路径；用户取消返回 None
+#[tauri::command]
+pub async fn save_export(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Option<String>, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("没有收到文件内容".into());
+    };
+    let bytes = bytes.clone();
+    let name = request
+        .headers()
+        .get("x-file-name")
+        .and_then(|v| v.to_str().ok())
+        .map(percent_decode)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Peekit".into());
+    tauri::async_runtime::spawn_blocking(move || {
+        let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        let mut dialog = app.dialog().file().set_file_name(&name);
+        if let Ok(dir) = app.path().picture_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+        if !ext.is_empty() {
+            dialog = dialog.add_filter(ext.to_ascii_uppercase(), &[ext.as_str()]);
+        }
+        let Some(dest) = dialog.blocking_save_file() else { return Ok(None) };
+        let dest = dest.into_path().map_err(|e| e.to_string())?;
+        // 先写临时文件再改名，写到一半失败不会留下坏文件
+        let tmp = dest.with_extension("peekit-tmp");
+        std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+        Ok(Some(dest.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// %XX 解码（文件名里的中文等，前端用 encodeURIComponent 编码）；不合法的 % 原样保留
+fn percent_decode(s: &str) -> String {
+    let hex = |c: u8| (c as char).to_digit(16).map(|v| v as u8);
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::percent_decode;
+
+    #[test]
+    fn decodes_file_names() {
+        assert_eq!(percent_decode("2025%20%E5%88%9B%E4%BD%9C%E5%B9%B4%E5%8E%86.png"), "2025 创作年历.png");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%zzb"), "a%zzb");
+        assert_eq!(percent_decode("%4"), "%4");
+    }
+}
+
 /// 存到原文件自己身上：什么都不用做（copy 到自身会把文件截断成 0 字节）
 fn same_file(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {

@@ -13,7 +13,7 @@ import { monthJump } from './engine/months';
 import { cameraLevel, stageUnit } from './engine/gesture';
 import { clamp } from './engine/math';
 import { Controller, type UiFlags } from './controller';
-import { UNASSIGNED_COLOR } from './tokens';
+import { UNASSIGNED_COLOR, color } from './tokens';
 import { applyI18n, lang, onLangChange, t } from './i18n';
 import { el, Styled } from './view/dom';
 import { StageView } from './view/stage';
@@ -45,6 +45,9 @@ import { ColorIndex } from './data/color-index';
 import { sampleImage, sampleSvg } from './data/palette-loader';
 import { Palette } from './view/palette';
 import { ConfirmDialog } from './view/confirm-dialog';
+import { CalendarView } from './view/calendar';
+import { drawYearPoster } from './view/year-poster';
+import type { YearStats } from './engine/calendar';
 import type { SearchItem } from './engine/search';
 import { setThemePref } from './theme';
 import { toggleReduceTransparency, transparencyReduced } from './transparency';
@@ -66,7 +69,7 @@ import { nameFromSources } from './data/sets';
 import { GIF_ANIM_BUDGET, gifCandidates, gifMayAnimate, imageKind } from './data/formats';
 import {
   appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeDisplay, makeThumbnail, onFileDrop, openExternal,
-  MINI_EDGE, pickFiles, pickFolders, revealInFolder, saveImageAs, scanSources, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
+  MINI_EDGE, pickFiles, pickFolders, revealInFolder, saveExport, saveImageAs, scanSources, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
 } from './data/tauri-io';
 import type { Source } from './data/library';
 import { ThumbLoader } from './data/thumb-loader';
@@ -161,6 +164,8 @@ export class App {
   private cmdPalette: Palette;
   /** 删除确认框（2026-11-20） */
   private confirmDialog: ConfirmDialog;
+  /** 创作年历（2026-11-20） */
+  private calendar: CalendarView;
   /** 筛选时编辑卡的系列芯片按全部作品算（被筛掉的作品所在的系列也要能选） */
   private usedSeries: Set<string> | null = null;
   private usedFor: readonly Work[] | null = null;
@@ -345,11 +350,34 @@ export class App {
       checks: () => this.checks,
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
+      openCalendar: () => this.openCalendar(),
       confirm: (opts, run) => this.confirmDialog.open(opts, run),
     });
     this.ctxMenu = new ContextMenu();
     // 删除预览集 / 情绪板的确认框（2026-11-20，屏幕中央）
     this.confirmDialog = new ConfirmDialog();
+    // 创作年历（2026-11-20）：整页，统计的是当前预览集的全部作品（不受筛选影响）
+    this.calendar = new CalendarView({
+      works: () => this.full.works,
+      setName: () => this.service.current.name,
+      series: (id) => {
+        const s = this.seriesById.get(id);
+        return { name: s ? displayName(s) : t('series.unassigned'), color: s?.color ?? UNASSIGNED_COLOR };
+      },
+      colorsOf: (w) => w.swatches ?? (w.bg && w.bg !== color['color-chip'] ? [{ hex: w.bg, share: 1 }] : null),
+      missingColors: (ws) => this.colorIndex.missing(ws).length,
+      analyzeColors: async (ws) => {
+        await this.colorIndex.fill(ws, (done, total) => this.toast.show(t('color.analyzing', { done, total }), true));
+        this.toast.hide();
+        this.persistSoon();
+      },
+      go: (w) => {
+        this.closeCalendar();
+        this.goToWork(w);
+      },
+      close: () => this.closeCalendar(),
+      exportYear: (stats, works) => void this.exportYear(stats, works),
+    });
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'F5' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -515,6 +543,7 @@ export class App {
       this.empty.root,
       this.timeline.root,
       this.boardView.root,
+      this.calendar.root,
       this.toast.root,
       this.checkBar.root,
       this.zoomBadge,
@@ -660,7 +689,7 @@ export class App {
   }
 
   blockKeys(): boolean {
-    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen;
+    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen || this.calendar.isOpen;
   }
 
   /** 舞台中间那幅卡片在屏幕上的位置 */
@@ -1774,6 +1803,41 @@ export class App {
     return swatchesOf(px);
   }
 
+  // ───────────── 创作年历（2026-11-20） ─────────────
+
+  openCalendar(): void {
+    if (this.calendar.isOpen) return;
+    if (this.boardView.isOpen) this.closeBoard();
+    if (this.ui.editing) this.finishEdit();
+    if (this.controller.fullscreen) this.controller.toggleFullscreen();
+    if (this.controller.magnified) this.controller.magnify(false);
+    this.root.classList.add('is-calendar');
+    this.calendar.show();
+  }
+
+  private closeCalendar(): void {
+    if (!this.calendar.isOpen) return;
+    this.calendar.hide();
+    this.root.classList.remove('is-calendar');
+    const a = document.activeElement;
+    if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
+    this.controller.kick();
+  }
+
+  /** 年度回顾导出成一张图 */
+  private async exportYear(stats: YearStats, works: readonly Work[]): Promise<void> {
+    try {
+      this.toast.show(t('export.rendering'), true);
+      const bytes = await drawYearPoster({ stats, works, setName: this.service.current.name });
+      const name = `${stats.year} ${t('calendar.title')}.png`;
+      const to = await saveExport(bytes, name);
+      if (to) this.toast.show(t('toast.saved', { name: to.split(/[\\/]/).pop() ?? to }));
+      else this.toast.hide();
+    } catch (err) {
+      this.toast.show(t('toast.actionFailed', { msg: String(err) }));
+    }
+  }
+
   // ───────────── 命令面板（2026-11-20，Ctrl+K） ─────────────
 
   openPalette(): void {
@@ -1902,6 +1966,7 @@ export class App {
     if (desktop) add(act(t('view.refresh'), () => void this.refresh(), { shortcut: 'F5', keywords: 'refresh rescan' }));
     add(act(t('sets.new').replace(/^\+\s*/, ''), this.newSet, { keywords: 'new collection set' }));
     add(act(t('board.new'), this.newBoard, { keywords: 'new mood board' }));
+    add(act(t('calendar.title'), () => this.openCalendar(), { keywords: 'calendar year review heatmap stats' }), true);
     add(act(t('about.menu'), () => void this.about.open(), { keywords: 'about version update' }));
     return out;
   }

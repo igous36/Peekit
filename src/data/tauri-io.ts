@@ -134,6 +134,24 @@ export function logInfo(msg: string): void {
 }
 
 /** 原图另存为：Rust 端弹系统的保存对话框再复制文件。返回保存到的路径，取消时为 null */
+/**
+ * 导出（2026-11-20）：把前端生成好的文件（PNG / JPG / PDF）存到用户选的位置。
+ * 桌面版弹系统保存对话框（默认在“图片”文件夹），返回保存到的路径，取消返回 null；
+ * 浏览器调试时直接下载，返回文件名
+ */
+export async function saveExport(bytes: Uint8Array, fileName: string): Promise<string | null> {
+  if (isTauri()) {
+    return invoke<string | null>('save_export', bytes, { headers: { 'x-file-name': encodeURIComponent(fileName) } });
+  }
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return fileName;
+}
+
 export function saveImageAs(path: string): Promise<string | null> {
   return invoke<string | null>('save_image_as', { path });
 }

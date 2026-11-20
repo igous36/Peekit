@@ -71,6 +71,8 @@ export const ICON_LAYERS = ['M12 3 3 8l9 5 9-5Z', 'M3 13l9 5 9-5'];
 export const ICON_BOARD = ['M4 4h7v9H4z', 'M13 4h7v5h-7z', 'M13 11h7v9h-7z', 'M4 15h7v5H4z'];
 export const ICON_IMAGE = ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9h.01'];
 export const ICON_BOLT = ['M13 3 5 13.5h6L10 21l8-10.5h-6Z'];
+/** 创作年历（2026-11-20） */
+export const ICON_CALENDAR = ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v4', 'M16 3v4', 'M8 14h2', 'M14 14h2', 'M8 17h2'];
 
 /** 一个元素 + 上次写入的样式值 */
 export class Styled<E extends HTMLElement = HTMLElement> {

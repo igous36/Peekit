@@ -39,7 +39,7 @@ import { setThemePref, themePref } from '../theme';
 import { prefs, setPref, wheelCanToggleFullscreen, type Prefs } from '../prefs';
 import { toggleReduceTransparency, transparencyReduced } from '../transparency';
 import {
-  el, svgIcon, ICON_BLUR, ICON_CHECK, ICON_DOWNLOAD, ICON_FLIP, ICON_GRAY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV,
+  el, svgIcon, ICON_BLUR, ICON_CALENDAR, ICON_CHECK, ICON_DOWNLOAD, ICON_FLIP, ICON_GRAY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV,
   ICON_SEARCH, ICON_SLIDERS, ICON_TRASH,
 } from './dom';
 import { percentOf, type UpdateState } from '../updater';
@@ -121,6 +121,8 @@ export interface MenuHandlers {
   toggleCheck: (k: CheckKind) => void;
   /** 打开命令面板（Ctrl+K，2026-11-20） */
   openPalette: () => void;
+  /** 打开创作年历（2026-11-20） */
+  openCalendar: () => void;
   /** 屏幕中央的确认框（2026-11-20，删除预览集 / 情绪板）：点了确认才调用 run */
   confirm: (opts: ConfirmOptions, run: () => void) => void;
 }
@@ -293,6 +295,11 @@ export class AppMenu {
       this.item(t('menu.importFilesTo'), () => this.go('files'), { trail: chevron() }),
       this.item(t('menu.importFolderTo'), () => this.go('folder'), { trail: chevron() }),
       view,
+      // 创作年历（2026-11-20）：整页
+      this.item(t('calendar.title'), () => {
+        this.dropdown.close(false);
+        this.handlers.openCalendar();
+      }, { icon: ICON_CALENDAR }),
       this.divider(),
       this.caption('sets.title'),
     );

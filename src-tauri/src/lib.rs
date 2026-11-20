@@ -74,6 +74,7 @@ pub fn run() {
             thumbs::make_display,
             ui::set_theme_background,
             ui::save_image_as,
+            ui::save_export,
             log_error,
             log_info,
             asset_check,

@@ -55,10 +55,11 @@ src/
   engine/          纯函数，都有单测：弹簧、画作映射、玻璃避让、手势、滚轮档位、全屏缩放、
                    放大框、时间轴刻度、取主题色、月份、情绪板几何（board-layout）、网格空间索引（box-grid）、
                    拖起阵列（picker）、星级和按星筛选（rating）、主色组成和按颜色筛选（swatches）、
-                   时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）
+                   时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）、创作年历统计（calendar）
   view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器、关于对话框、
                    拖起阵列（board-picker.ts）、情绪板画布（board/）、星星（stars.ts）、
-                   自检工具条（check-bar.ts）、命令面板（palette.ts）……
+                   自检工具条（check-bar.ts）、命令面板（palette.ts）、创作年历（calendar.ts）和
+                   它导出的年度回顾图（year-poster.ts）……
   data/            作品库模型、保存、导入和扫描、缩略图队列、取色队列、Rust 调用、
                    情绪板（boards.ts 数据和增删改，board-store.ts 保存）
   locales/         除中文和英文以外的 10 种界面语言
@@ -79,7 +80,7 @@ src-tauri/src/
   raw.rs           从相机 RAW 里找内嵌的 JPEG 预览
   svg.rs           读 SVG 的尺寸
   asset_scope.rs   asset 协议的访问范围
-  ui.rs            窗口底色、另存为
+  ui.rs            窗口底色、另存为、保存导出的文件（save_export）
 scripts/release.mjs  发版打包
 scripts/bench-board.ts  情绪板几何算法的压测
 ```
@@ -99,6 +100,10 @@ scripts/bench-board.ts  情绪板几何算法的压测
 预览集修改后 800ms 写一次盘，情绪板 600ms。切换预览集前和安装更新前会立刻写盘（`LibraryService.flush()`、`BoardStore.flush()`），因为安装程序会直接关掉应用。
 
 语言、深浅色、偏好设置（包括降低透明度，没拨过开关时是 null，表示跟随系统）、计数圆环的显示方式记在 localStorage（`peekit:` 开头的 key）。画师自检的开关只在内存里。
+
+## 导出
+
+导出的文件（年度回顾图，以后的长图、PDF）都在前端用 canvas 画好，生成字节后交给 `saveExport`（`data/tauri-io.ts`）。桌面版调 Rust 的 `save_export`：文件内容走原始字节（不经过 JSON），默认文件名放在请求头 `x-file-name`（URL 编码），Rust 弹系统保存对话框（默认在“图片”文件夹）后先写临时文件再改名。浏览器调试时直接下载。画图用的图片从 asset 协议 fetch 成 blob 再 `createImageBitmap`，canvas 不会被“污染”，能导出。
 
 ## 图片
 

@@ -1796,6 +1796,468 @@ button:focus-visible {
   }
 }
 
+/* ───────────── 创作年历（2026-11-20，view/calendar.ts） ─────────────
+   整页盖在舞台上（和情绪板同一层），顶栏和情绪板一样（返回 · 标题 · 年份），右上角“导出图片”。
+   内容居中一栏（最宽 1040）：大号年份、四个数字卡片、热力图、每个月 + 这一年的颜色、最常画的系列。
+   热力图的颜色是强调色按 30 / 55 / 80 / 100% 混进芯片灰，和应用里唯一的强调色一致 */
+.calendar {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: var(--color-bg);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.calendar.is-open {
+  opacity: 1;
+}
+
+.app.is-calendar .wordmark,
+.app.is-calendar .info,
+.app.is-calendar .timeline,
+.app.is-calendar .hint,
+.app.is-calendar .series-pill,
+.app.is-calendar .zoom-meter,
+.app.is-calendar .check-bar {
+  visibility: hidden;
+}
+
+/* 计数圆环自己的行内样式写着 visibility: visible（counter.ts），父元素藏不住它 */
+.app.is-calendar .counter {
+  visibility: hidden !important;
+}
+
+.cal-title {
+  margin: 0 6px 0 4px;
+  font: 600 15px/1 var(--font-family-sans);
+  color: var(--color-text);
+}
+
+.cal-year {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.cal-year-label {
+  min-width: 48px;
+  text-align: center;
+  font: 600 15px/1 var(--font-family-sans);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.cal-year-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.cal-export {
+  position: absolute;
+  top: 14px;
+  right: 164px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 13px/1 var(--font-family-sans);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.cal-export:hover {
+  background: var(--color-chip);
+}
+
+.cal-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding-top: 64px;
+  scrollbar-width: thin;
+}
+
+.cal-page {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 8px 48px 72px;
+}
+
+.cal-hero-year {
+  margin: 12px 0 6px;
+  font: 600 88px/1 var(--font-family-sans);
+  letter-spacing: -0.03em;
+  color: var(--color-text);
+}
+
+.cal-hero-sub {
+  margin: 0;
+  font: var(--font-body);
+  color: var(--color-text-secondary);
+}
+
+.cal-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 28px 0 16px;
+}
+
+.cal-stat,
+.cal-card {
+  background: var(--color-surface);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-pill);
+}
+
+.cal-stat {
+  padding: 18px 20px 16px;
+  min-width: 0;
+}
+
+.cal-stat-value {
+  margin: 0 0 6px;
+  font: 600 32px/1.1 var(--font-family-sans);
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cal-stat-label,
+.cal-stat-sub {
+  margin: 0;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.cal-stat-sub {
+  margin-top: 2px;
+  color: var(--color-dashed);
+}
+
+.cal-card {
+  margin-top: 16px;
+  padding: 22px 24px 24px;
+  min-width: 0;
+}
+
+.cal-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cal-card-title {
+  margin: 0 0 16px;
+  font: 600 15px/1.2 var(--font-family-sans);
+  color: var(--color-text);
+}
+
+.cal-card-head .cal-card-title {
+  margin-bottom: 0;
+}
+
+.cal-heat {
+  margin-top: 16px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.cal-heat-months {
+  position: relative;
+  height: 18px;
+  margin-left: 36px;
+}
+
+.cal-heat-months span,
+.cal-heat-weekdays span {
+  position: absolute;
+  font: 400 11px/1 var(--font-family-sans);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.cal-heat-body {
+  display: flex;
+}
+
+.cal-heat-weekdays {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+}
+
+.cal-heat-weekdays span {
+  display: flex;
+  align-items: center;
+}
+
+.cal-heat-cells {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.cal-cell {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--color-chip);
+}
+
+.cal-cell.lv-1 {
+  background: color-mix(in srgb, var(--color-accent) 30%, var(--color-chip));
+}
+
+.cal-cell.lv-2 {
+  background: color-mix(in srgb, var(--color-accent) 55%, var(--color-chip));
+}
+
+.cal-cell.lv-3 {
+  background: color-mix(in srgb, var(--color-accent) 80%, var(--color-chip));
+}
+
+.cal-cell.lv-4 {
+  background: var(--color-accent);
+}
+
+.cal-heat-cells .cal-cell:hover {
+  outline: 2px solid var(--color-text);
+  outline-offset: 1px;
+}
+
+.cal-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.cal-legend .cal-cell {
+  position: static;
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+}
+
+.cal-legend span:first-child {
+  margin-right: 4px;
+}
+
+.cal-legend span:last-child {
+  margin-left: 4px;
+}
+
+.cal-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.cal-months {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  height: 188px;
+}
+
+.cal-month {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+
+.cal-month-n {
+  height: 16px;
+  font: 500 11px/16px var(--font-family-sans);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-month-track {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  max-width: 26px;
+  margin-top: 4px;
+}
+
+.cal-month-bar {
+  width: 100%;
+  min-height: 3px;
+  border-radius: 6px 6px 3px 3px;
+  background: color-mix(in srgb, var(--color-accent) 50%, var(--color-chip));
+}
+
+.cal-month.is-top .cal-month-bar {
+  background: var(--color-accent);
+}
+
+.cal-month-label {
+  margin-top: 8px;
+  font: 400 11px/1 var(--font-family-sans);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.cal-colors-bar {
+  display: flex;
+  height: 48px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+.cal-colors-bar span {
+  flex-basis: 0;
+  min-width: 2px;
+}
+
+.cal-colors-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin-top: 16px;
+}
+
+.cal-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.cal-color i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+
+.cal-color-pct {
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+
+.cal-note {
+  margin: 14px 0 10px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.cal-analyze {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--color-input-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 13px/1 var(--font-family-sans);
+  cursor: pointer;
+}
+
+.cal-analyze:hover:not(:disabled) {
+  background: var(--color-chip);
+}
+
+.cal-series {
+  display: grid;
+  grid-template-columns: minmax(0, 200px) minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 14px;
+  height: 36px;
+}
+
+.cal-series-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font: var(--font-label);
+  color: var(--color-text);
+}
+
+.cal-series-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-series-name .dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cal-series-track {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--color-chip);
+  overflow: hidden;
+}
+
+.cal-series-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.cal-series-n {
+  text-align: right;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.cal-tip {
+  position: absolute;
+  z-index: 5;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-text);
+  color: var(--color-surface);
+  font: var(--font-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translate(-50%, -100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.cal-tip.is-shown {
+  opacity: 1;
+}
+
+.cal-empty {
+  margin-top: 30vh;
+  text-align: center;
+  font: var(--font-body);
+  color: var(--color-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar {
+    transition: none;
+  }
+}
+
 /* ───────────── 删除确认框（2026-11-20，confirm-dialog.ts） ─────────────
    屏幕中央，和关于对话框同一套遮罩、白卡、按钮；只有一句“删除「xxx」？”和取消 / 删除。
    删除按钮用墨色实心（不用红色，保持只有一个强调色） */
