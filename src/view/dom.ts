@@ -59,6 +59,19 @@ export const ICON_PALETTE = [
   'M14.5 7.5h.01',
 ];
 
+/** 星级（2026-11-20）：没打的是描边，打了的在 CSS 里填满 */
+export const ICON_STAR = ['M12 3.6l2.55 5.17 5.7.83-4.12 4.02.97 5.68L12 16.62l-5.1 2.68.97-5.68L3.75 9.6l5.7-.83Z'];
+/** 画师自检（2026-11-20）：水平翻转、灰度、模糊 */
+export const ICON_FLIP = ['M12 3v18', 'M8.5 7 3.5 17h5Z', 'M15.5 7l5 10h-5Z'];
+export const ICON_GRAY = ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z', 'M12 3v18', 'M12 7.5h6.5', 'M12 12h9', 'M12 16.5h6.5'];
+export const ICON_BLUR = ['M5.5 9.5h13', 'M3.5 13.5h17', 'M6.5 17.5h11', 'M9 5.5h6'];
+export const ICON_SEARCH = ['M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z', 'M20 20l-4-4'];
+export const ICON_CLOSE = ['M6 6l12 12', 'M18 6 6 18'];
+export const ICON_LAYERS = ['M12 3 3 8l9 5 9-5Z', 'M3 13l9 5 9-5'];
+export const ICON_BOARD = ['M4 4h7v9H4z', 'M13 4h7v5h-7z', 'M13 11h7v9h-7z', 'M4 15h7v5H4z'];
+export const ICON_IMAGE = ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9h.01'];
+export const ICON_BOLT = ['M13 3 5 13.5h6L10 21l8-10.5h-6Z'];
+
 /** 一个元素 + 上次写入的样式值 */
 export class Styled<E extends HTMLElement = HTMLElement> {
   private last: Record<string, string> = {};

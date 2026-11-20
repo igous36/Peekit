@@ -17,6 +17,7 @@ import { parseBoards } from './data/boards';
 import { BoardStore } from './data/board-store';
 import { logError, setThemeBackground } from './data/tauri-io';
 import { initTheme, onThemeChange, theme } from './theme';
+import { initTransparency } from './transparency';
 import type { Library } from './data/types';
 import { App } from './app';
 
@@ -24,6 +25,7 @@ async function boot(): Promise<void> {
   applyTokens();
   // 外观先于界面生效：第一帧就是对的深浅
   initTheme();
+  initTransparency();
   setThemeBackground(theme() === 'dark');
   onThemeChange((t) => setThemeBackground(t === 'dark'));
   initI18n();

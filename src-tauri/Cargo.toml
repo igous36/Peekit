@@ -22,6 +22,8 @@ tauri-plugin-dialog = "2"
 # 只开需要的解码器：PNG / JPEG / WebP，2026-11-17 加 GIF / BMP / TIFF（都是纯 Rust）。
 # SVG 不经过这里：界面直接显示矢量原图，尺寸在 svg.rs 里从文件头读
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff", "rayon"] }
+# 色彩管理（2026-11-20）：图片里嵌的 ICC 配置文件转 sRGB（color.rs）。image 本来就依赖它，版本跟着 image 走
+moxcms = "0.8"
 # 读 EXIF 日期和方向（JPEG / PNG / WebP 都支持）
 kamadak-exif = "0.6"
 # 缩略图用有损 WebP（image 自带的 WebP 编码器只有无损）

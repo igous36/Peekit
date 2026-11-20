@@ -45,19 +45,21 @@ pub fn mini_cache_name(path: &str, mtime: f64, size: u64) -> String {
 }
 
 /// 解码并按 EXIF 方向转正（PNG / JPEG / WebP / GIF / BMP / TIFF；动图取第一帧，多页 TIFF 取第一页；
-/// 相机 RAW 取内嵌的 JPEG 预览，见 raw.rs）。
+/// 相机 RAW 取内嵌的 JPEG 预览，见 raw.rs），连同图片里嵌的 ICC 配置文件（2026-11-20，色彩管理用，见 color.rs）。
 /// min_edge 只对 RAW 有用：给了就挑“长边不小于它的最小那张”预览（缩略图用，解码快），否则挑最大的
-pub fn decode_for(src: &Path, min_edge: Option<u32>) -> Result<DynamicImage, String> {
+pub fn decode_with_icc(src: &Path, min_edge: Option<u32>) -> Result<(DynamicImage, Option<Vec<u8>>), String> {
     if crate::raw::is_raw(src) {
-        return crate::raw::decode(src, min_edge);
+        return crate::raw::decode_with_icc(src, min_edge);
     }
     let reader = image::ImageReader::open(src).map_err(|e| e.to_string())?;
     let reader = reader.with_guessed_format().map_err(|e| e.to_string())?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    // 读不出配置文件不算错（当作没有）
+    let icc = decoder.icc_profile().ok().flatten();
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     img.apply_orientation(orientation);
-    Ok(img)
+    Ok((img, icc))
 }
 
 /// 编码成有损 WebP 并写到 out：先写临时文件再改名，避免前端读到写了一半的文件
@@ -75,13 +77,15 @@ fn write_webp(img: &DynamicImage, out: &Path, quality: f32) -> Result<(), String
     std::fs::rename(&tmp, out).map_err(|e| e.to_string())
 }
 
-/// 解码（按 EXIF 方向转正）→ 缩到长边 1600 → 有损 WebP；返回主色
+/// 解码（按 EXIF 方向转正）→ 缩到长边 1600 → 按 ICC 配置文件转成 sRGB → 有损 WebP；返回主色
 pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
-    let mut img = decode_for(src, Some(THUMB_EDGE))?;
+    let (mut img, icc) = decode_with_icc(src, Some(THUMB_EDGE))?;
     let (w, h) = img.dimensions();
     if w.max(h) > THUMB_EDGE {
         img = img.thumbnail(THUMB_EDGE, THUMB_EDGE);
     }
+    // 转换放在缩小之后：像素少，几毫秒的事
+    let img = crate::color::to_srgb(img, icc.as_deref());
     let color = dominant_color(&img);
     write_webp(&img, out, WEBP_QUALITY)?;
     Ok(color)
@@ -89,14 +93,16 @@ pub fn generate(src: &Path, out: &Path) -> Result<String, String> {
 
 /// 小缩略图：有 1600 的缩略图就从它缩（解码一张 WebP 比解码原图快得多），没有就从原图（RAW 挑小的内嵌预览）；返回主色
 pub fn generate_mini(src: &Path, thumb: Option<&Path>, out: &Path) -> Result<String, String> {
-    let mut img = match thumb.filter(|t| t.exists()) {
-        Some(t) => image::open(t).map_err(|e| e.to_string())?,
-        None => decode_for(src, Some(MINI_EDGE))?,
+    // 1600 的缩略图已经是 sRGB 了，从它缩不用再转；从原图缩要按配置文件转
+    let (mut img, icc) = match thumb.filter(|t| t.exists()) {
+        Some(t) => (image::open(t).map_err(|e| e.to_string())?, None),
+        None => decode_with_icc(src, Some(MINI_EDGE))?,
     };
     let (w, h) = img.dimensions();
     if w.max(h) > MINI_EDGE {
         img = img.thumbnail(MINI_EDGE, MINI_EDGE);
     }
+    let img = crate::color::to_srgb(img, icc.as_deref());
     let color = dominant_color(&img);
     write_webp(&img, out, MINI_QUALITY)?;
     Ok(color)
@@ -120,8 +126,9 @@ pub fn display_cache_name(path: &str, mtime: f64, size: u64, full: bool) -> Stri
 
 pub fn generate_display(src: &Path, out: &Path, full: bool) -> Result<(), String> {
     // RAW：看大图挑够 4096 的最小预览（没有就最大的）；复制挑最大的
-    let img = decode_for(src, if full { None } else { Some(DISPLAY_EDGE) })?;
+    let (img, icc) = decode_with_icc(src, if full { None } else { Some(DISPLAY_EDGE) })?;
     if full {
+        // 复制用的原尺寸 PNG 保留原来的像素（16 位不降成 8 位），不做色彩转换
         let tmp = out.with_extension("tmp");
         img.save_with_format(&tmp, image::ImageFormat::Png).map_err(|e| e.to_string())?;
         return std::fs::rename(&tmp, out).map_err(|e| e.to_string());
@@ -132,6 +139,8 @@ pub fn generate_display(src: &Path, out: &Path, full: bool) -> Result<(), String
     } else {
         img
     };
+    // 看的大图是不带配置文件的 WebP：和缩略图一样先转成 sRGB
+    let img = crate::color::to_srgb(img, icc.as_deref());
     write_webp(&img, out, DISPLAY_QUALITY)
 }
 
@@ -171,15 +180,43 @@ pub fn dominant_color(img: &DynamicImage) -> String {
 /// 规范路径对不上，所以这里按真实存在的目录再补两条。
 pub fn prepare(app: &AppHandle) {
     match thumbs_dir(app) {
-        Ok(dir) => crate::asset_scope::allow(app, &dir, true),
+        Ok(dir) => {
+            crate::asset_scope::allow(app, &dir, true);
+            // 换了缓存版本：旧版本留在上一级 thumbs/ 里的文件后台删掉（只删文件，不碰子目录）
+            if let Some(old) = dir.parent().map(Path::to_path_buf) {
+                std::thread::spawn(move || remove_old_cache(&old));
+            }
+        }
         Err(e) => eprintln!("建缩略图目录失败: {e}"),
     }
 }
 
+/// 缓存版本（2026-11-20）：缩略图开始按 ICC 配置文件转 sRGB（color.rs），以前生成的颜色可能不对，
+/// 换一个子目录，所有缩略图按需重新生成一次。以后缩略图的生成方式再变，就把这里加一。
+/// 子目录还在 tauri.conf.json 的 $APPCACHE/thumbs/** 范围里
+const CACHE_VERSION: &str = "c1";
+
 fn thumbs_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs");
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("thumbs").join(CACHE_VERSION);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
+}
+
+/// 删掉 dir 里直接放着的旧缓存文件（webp / png / tmp），子目录（新版本的缓存）不动
+fn remove_old_cache(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut n = 0;
+    for e in entries.flatten() {
+        let p = e.path();
+        let old = p.is_file()
+            && p.extension().and_then(|x| x.to_str()).is_some_and(|x| matches!(x, "webp" | "png" | "tmp"));
+        if old && std::fs::remove_file(&p).is_ok() {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        println!("[peekit] 清掉旧版缩略图缓存 {n} 个");
+    }
 }
 
 /// edge：不传是 1600 的缩略图；传 384（MINI_EDGE）是情绪板用的小缩略图
@@ -304,6 +341,37 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(&out_dir).ok();
+    }
+
+    /// 2026-11-20 色彩管理：带 Display P3 配置文件的 PNG，缩略图（不带配置文件的 WebP）要先转成 sRGB，
+    /// 和 WebView2 按配置文件显示原图时的颜色一致；同样的像素不带配置文件就原样
+    #[test]
+    fn thumbnails_convert_icc_to_srgb() {
+        use image::ImageEncoder;
+        let dir = std::env::temp_dir().join(format!("peekit-icc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let px = image::RgbImage::from_pixel(64, 64, image::Rgb([200, 100, 50]));
+        let p3 = moxcms::ColorProfile::new_display_p3().encode().unwrap();
+        let tagged = dir.join("p3.png");
+        {
+            let f = std::fs::File::create(&tagged).unwrap();
+            let mut enc = image::codecs::png::PngEncoder::new(f);
+            enc.set_icc_profile(p3).unwrap();
+            enc.write_image(px.as_raw(), 64, 64, image::ExtendedColorType::Rgb8).unwrap();
+        }
+        let plain = dir.join("plain.png");
+        px.save(&plain).unwrap();
+
+        let (t1, t2) = (dir.join("p3.webp"), dir.join("plain.webp"));
+        let c1 = generate(&tagged, &t1).unwrap();
+        let c2 = generate(&plain, &t2).unwrap();
+        let a = image::open(&t1).unwrap().get_pixel(32, 32);
+        let b = image::open(&t2).unwrap().get_pixel(32, 32);
+        // P3 的这个橙色在 sRGB 里更红、更少蓝（WebP 有损，留一点余量）
+        assert!(a[0] > 205 && a[2] < 45, "转换后 {a:?}");
+        assert!(b[0].abs_diff(200) <= 3 && b[2].abs_diff(50) <= 3, "没有配置文件 {b:?}");
+        assert_ne!(c1, c2, "主色也按转过的算");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

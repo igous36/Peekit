@@ -31,7 +31,16 @@ import {
   AUTO_CHECK_DELAY, AUTO_CHECK_EVERY, Updater, announcedVersion, markAnnounced, percentOf, shouldAnnounce, type UpdateState,
 } from './updater';
 import { onPrefsChange, prefs } from './prefs';
-import { ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_TRASH } from './view/dom';
+import {
+  svgIcon, ICON_CLOSE, ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
+} from './view/dom';
+import { clampRating, countAtLeast, filterByRating, ratingFromKey, toggleRating, viewIndexOf } from './engine/rating';
+import { CHECK_KEYS, CHECK_KINDS, NO_CHECKS, anyCheck, checkFromKey, toggleCheck, type CheckKind, type CheckState } from './engine/checks';
+import { CheckBar, CHECK_ICONS } from './view/check-bar';
+import { Palette } from './view/palette';
+import type { SearchItem } from './engine/search';
+import { setThemePref } from './theme';
+import { toggleReduceTransparency, transparencyReduced } from './transparency';
 import { ColorPicker } from './view/series-color';
 import { RenamePopover } from './view/series-rename';
 import { installFocusOrder } from './view/focus-order';
@@ -94,9 +103,11 @@ const NO_MEMBERS: readonly number[] = [];
 /** 拖起阵列里情绪板预览框的宽高比（和 styles.css 里 .pick-art 的 78% × 62% 一致） */
 const PICK_ART_ASPECT = 0.78 / 0.62;
 
-/** 右键删除前的作品库状态（撤销用） */
+/** 右键删除前的作品库状态（撤销用）；都是全部作品（不管有没有按星筛选） */
 interface UndoSnapshot {
   works: Work[];
+  /** 删除前屏幕上的那一份（按星筛选时是筛选后的）：删除后停在哪一幅按它算 */
+  viewWorks: Work[];
   seriesOf: Map<string, string>;
   series: Series[];
   /** 被标成“已移除”的作品 */
@@ -111,7 +122,30 @@ export class App {
   readonly ui: UiState = { editing: false, touched: false, axis: null, hoverThumb: null };
   readonly controller: Controller;
 
+  /**
+   * 星级筛选（2026-11-20）：full 是当前预览集的全部作品，lib 是屏幕上显示的（按星筛选后的）。
+   * 没有筛选时两者是同一个对象。筛选时 lib.works 是 full.works 的子集（同一批作品对象），
+   * lib.series 是转到 full.series 的存取器，所以改标题、改归属、改系列都直接落到 full 上；
+   * 会换掉作品数组的操作（移除、删除系列、撤销）和保存都对着 full 做。
+   * 筛选开着时改了星级，那幅不会马上消失，下次换筛选线或重新加载时才按新星级筛
+   */
+  private full: Library;
   private lib: Library;
+  /** 只看几星以上（0 = 不筛选）；只在这次运行里有效，不存盘 */
+  private ratingMin = 0;
+  private filterChip: HTMLButtonElement;
+  private filterChipText: HTMLElement;
+  /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊，只在这次运行里有效 */
+  private checks: CheckState = { ...NO_CHECKS };
+  private checkBar: CheckBar;
+  private checkChip: HTMLButtonElement;
+  private checkChipIcons: HTMLElement;
+  private magClass = false;
+  /** 命令面板（2026-11-20，Ctrl+K） */
+  private cmdPalette: Palette;
+  /** 筛选时编辑卡的系列芯片按全部作品算（被筛掉的作品所在的系列也要能选） */
+  private usedSeries: Set<string> | null = null;
+  private usedFor: readonly Work[] | null = null;
   private service: LibraryService;
   private loadLibrary: () => Promise<Library>;
   private seriesById = new Map<string, Series>();
@@ -175,7 +209,7 @@ export class App {
   private pageKey: { series: readonly number[]; cur: number; caps: ThumbCaps; sel: number | null } | null = null;
   private saveTimer = 0;
   private thumbRetries = new Map<string, number>();
-  private reveal = { left: false, right: false };
+  private reveal = { left: false, right: false, bottom: false };
   // 情绪板（2026-11-18）
   private boards: BoardStore;
   private boardView: BoardView;
@@ -192,6 +226,7 @@ export class App {
   private byPathFor: readonly Work[] | null = null;
 
   constructor(mount: HTMLElement, opts: AppOptions) {
+    this.full = opts.lib;
     this.lib = opts.lib;
     this.service = opts.service;
     this.boards = opts.boards;
@@ -244,6 +279,7 @@ export class App {
       cancel: this.cancelEdit,
       seriesMenu: (id, x, y) => this.openSeriesMenu(id, x, y),
       seriesDrag: (e, chip) => this.onSeriesChipDown(e, chip),
+      rate: (n) => this.rate(n, false),
     });
     this.timeline = new Timeline({
       go: (i) => ctl.go(i),
@@ -272,6 +308,11 @@ export class App {
       renameBoard: this.renameBoard,
       deleteBoard: this.deleteBoard,
       duplicateBoard: this.duplicateBoard,
+      ratingFilter: () => this.ratingMin,
+      setRatingFilter: (n) => this.setRatingFilter(n),
+      checks: () => this.checks,
+      toggleCheck: (k) => this.toggleCheck(k),
+      openPalette: () => this.openPalette(),
     });
     this.ctxMenu = new ContextMenu();
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
@@ -299,6 +340,43 @@ export class App {
       contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
     });
     this.hud.setSlot.append(this.switcher.root);
+    // 星级筛选开着时，字标那一行多一个“★ 3+ ×”，点了恢复显示全部（2026-11-20）
+    this.filterChipText = el('span', { class: 'status-chip-text' });
+    this.filterChip = el('button', { type: 'button', class: 'status-chip', hidden: true }, [
+      svgIcon(ICON_STAR, 14),
+      this.filterChipText,
+      el('span', { class: 'status-chip-x' }, [svgIcon(ICON_CLOSE, 12)]),
+    ]);
+    this.filterChip.addEventListener('click', () => this.setRatingFilter(0));
+    this.hud.statusSlot.append(this.filterChip);
+    // 命令面板（2026-11-20）：Ctrl+K 在哪都能打开（情绪板里也行）；拖起阵列开着时不行
+    this.cmdPalette = new Palette();
+    document.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'k') return;
+      e.preventDefault();
+      if (this.cmdPalette.isOpen) this.cmdPalette.close();
+      else this.openPalette();
+    });
+    // 画师自检（2026-11-20）：底部工具条 + 字标那一行的状态标签（显示开着的几项，点了全部关掉）
+    this.checkBar = new CheckBar((k) => this.toggleCheck(k));
+    this.checkChipIcons = el('span', { class: 'status-chip-icons' });
+    this.checkChip = el('button', { type: 'button', class: 'status-chip', hidden: true }, [
+      this.checkChipIcons,
+      el('span', { class: 'status-chip-x' }, [svgIcon(ICON_CLOSE, 12)]),
+    ]);
+    this.checkChip.addEventListener('click', () => this.clearChecks());
+    this.hud.statusSlot.append(this.checkChip);
+    // 单键快捷键（2026-11-20），焦点不在舞台上（比如在时间轴按钮上）也能用：
+    // 数字键 1–5 打星、0 清除；H 翻转、G 灰度、B 模糊
+    document.addEventListener('keydown', (e) => {
+      if (!this.shortcutAllowed(e)) return;
+      const r = ratingFromKey(e.key);
+      const c = r === null ? checkFromKey(e.key) : null;
+      if (r === null && !c) return;
+      e.preventDefault();
+      if (r !== null) this.rate(r, true);
+      else if (c) this.toggleCheck(c);
+    });
     this.empty = new EmptyState({
       pickFiles: () => void this.importTo('files', this.service.current.id),
       pickFolder: () => void this.importTo('folder', this.service.current.id),
@@ -388,6 +466,7 @@ export class App {
       this.timeline.root,
       this.boardView.root,
       this.toast.root,
+      this.checkBar.root,
       this.zoomBadge,
       this.winControls.root,
       this.drop.root,
@@ -396,6 +475,7 @@ export class App {
       this.colorPicker.root,
       this.renamePop.root,
       this.about.root,
+      this.cmdPalette.root,
       this.hud.live,
     ]);
     mount.replaceChildren(this.root);
@@ -410,6 +490,9 @@ export class App {
     onLangChange(() => {
       this.labelsVersion++;
       this.updateSetChip();
+      this.updateFilterChip();
+      this.updateCheckChip();
+      this.checkBar.relabel();
       ctl.kick();
     });
     this.root.addEventListener('pointermove', this.onRevealMove);
@@ -452,6 +535,7 @@ export class App {
     this.seriesById.clear();
     for (const s of this.lib.series) this.seriesById.set(s.id, s);
     this.membersDirty = true;
+    this.usedSeries = null;
   }
 
   /**
@@ -476,8 +560,17 @@ export class App {
 
   /** 有作品的系列（编辑卡的芯片；空系列隐藏，数据保留） */
   private seriesInUse(): Series[] {
-    this.membersOf('');
-    return this.lib.series.filter((s) => this.members.has(s.id));
+    if (this.lib === this.full) {
+      this.membersOf('');
+      return this.lib.series.filter((s) => this.members.has(s.id));
+    }
+    // 按星筛选时：按全部作品算（被筛掉的作品所在的系列也要能选），归属变了或作品列表换了才重算
+    if (!this.usedSeries || this.usedFor !== this.full.works) {
+      this.usedSeries = new Set(this.full.works.map((w) => w.series));
+      this.usedFor = this.full.works;
+    }
+    const used = this.usedSeries;
+    return this.lib.series.filter((s) => used.has(s.id));
   }
 
   private seriesOf(w: Work): Series {
@@ -489,8 +582,8 @@ export class App {
   setFullscreen(on: boolean): void {
     this.root.classList.toggle('is-fullscreen', on);
     this.winControls.setFullscreen(on);
-    this.reveal = { left: false, right: false };
-    this.root.classList.remove('reveal-left', 'reveal-right');
+    this.reveal = { left: false, right: false, bottom: false };
+    this.root.classList.remove('reveal-left', 'reveal-right', 'reveal-bottom');
     if (on) this.toast.show(t('fullscreen.hint'));
     else this.hideZoomBadge();
     void setWindowFullscreen(on).catch((err) => logError(`切换全屏失败: ${String(err)}`));
@@ -515,7 +608,7 @@ export class App {
   }
 
   blockKeys(): boolean {
-    return this.boardView.isOpen || this.picker.active;
+    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen;
   }
 
   /** 舞台中间那幅卡片在屏幕上的位置 */
@@ -630,9 +723,10 @@ export class App {
   }
 
   private workByPath(path: string): Work | undefined {
-    if (this.byPathFor !== this.lib.works) {
-      this.byPath = new Map(this.lib.works.filter((w) => w.path).map((w) => [w.path!, w]));
-      this.byPathFor = this.lib.works;
+    // 按全部作品找：按星筛掉的作品在情绪板里照样能复用缩略图
+    if (this.byPathFor !== this.full.works) {
+      this.byPath = new Map(this.full.works.filter((w) => w.path).map((w) => [w.path!, w]));
+      this.byPathFor = this.full.works;
     }
     return this.byPath.get(path);
   }
@@ -878,9 +972,12 @@ export class App {
     const top = e.clientY < REVEAL_ZONE_PX;
     const left = top && e.clientX < window.innerWidth / 2;
     const right = top && !left;
+    // 底边：浮出画师自检的工具条（2026-11-20）
+    const bottom = e.clientY > window.innerHeight - REVEAL_ZONE_PX * 1.5;
     if (left !== this.reveal.left) this.root.classList.toggle('reveal-left', left);
     if (right !== this.reveal.right) this.root.classList.toggle('reveal-right', right);
-    this.reveal = { left, right };
+    if (bottom !== this.reveal.bottom) this.root.classList.toggle('reveal-bottom', bottom);
+    this.reveal = { left, right, bottom };
   };
 
   // ───────────── 作品库：导入、换库 ─────────────
@@ -912,7 +1009,7 @@ export class App {
     // 作品库换掉了（导入、切换预览集、重新扫描）：之前的“撤销”作废
     if (!keepUndo) this.undo = null;
     // 重新扫描后作品对象是新的：已经到位的缩略图和主色接着用，不用重新请求、也不会闪一下
-    const prev = new Map(this.lib.works.map((w) => [w.id, w]));
+    const prev = new Map(this.full.works.map((w) => [w.id, w]));
     for (const w of lib.works) {
       const old = prev.get(w.id);
       if (old?.thumb && !old.broken) {
@@ -920,11 +1017,41 @@ export class App {
         w.bg = old.bg;
       }
     }
-    this.lib = lib;
-    this.indexSeries();
+    this.full = lib;
     this.loading = false;
-    this.labelsVersion++;
     if (lib.works.length) this.service.noteCount(lib.works.length);
+    // 按星筛选开着，但换来的作品里一幅够格的都没有（换了预览集）：自动显示全部
+    if (this.ratingMin > 0 && lib.works.length && !countAtLeast(lib.works, this.ratingMin)) {
+      this.toast.show(t('rating.noneShowAll', { n: this.ratingMin }));
+      this.ratingMin = 0;
+      this.updateFilterChip();
+    }
+    this.lib = this.viewOf(lib);
+    this.showView(viewIndexOf(lib.works, this.lib.works, focus), keepCamera);
+  }
+
+  /**
+   * 按星筛选（2026-11-20）：从全部作品得出屏幕上显示的作品。不筛选时就是 full 本身；
+   * 筛选时作品是子集，系列列表转到 full 上（改名、新建、删除系列都落在 full 上）
+   */
+  private viewOf(full: Library): Library {
+    if (this.ratingMin <= 0) return full;
+    return {
+      works: filterByRating(full.works, this.ratingMin),
+      get series() {
+        return full.series;
+      },
+      set series(v: Series[]) {
+        full.series = v;
+      },
+    };
+  }
+
+  /** 屏幕上的作品列表换了（换库、筛选、删除、撤销）：定位到第 focus 幅（直接跳过去，不做动画） */
+  private showView(focus: number, keepCamera: boolean): void {
+    const lib = this.lib;
+    this.indexSeries();
+    this.labelsVersion++;
     const n = lib.works.length;
     const i = clamp(focus, 0, Math.max(0, n - 1));
     const m = this.m;
@@ -975,6 +1102,11 @@ export class App {
       const keep = switching ? undefined : this.lib.works[this.controller.targetIndex()]?.id;
       const r = await this.service.import(sources, targetSetId);
       if (token !== this.loadToken) return;
+      // 新导入的作品还没打星：按星筛选开着的话先关掉，不然导入了却看不到
+      if (this.ratingMin > 0) {
+        this.ratingMin = 0;
+        this.updateFilterChip();
+      }
       const added = new Set(r.added);
       // 有新作品就跳到第一幅新作品，否则留在原来那幅（换了预览集就到最新一幅）
       let focus = r.lib.works.findIndex((w) => added.has(w.id));
@@ -997,7 +1129,7 @@ export class App {
     return this.service.sets.map((s) => ({
       id: s.id,
       name: s.name,
-      count: s.id === cur && !this.loading ? this.lib.works.length : s.count,
+      count: s.id === cur && !this.loading ? this.full.works.length : s.count,
       current: s.id === cur,
     }));
   };
@@ -1067,7 +1199,7 @@ export class App {
     try {
       const at = this.controller.targetIndex();
       const keep = this.lib.works[at]?.id;
-      const before = new Set(this.lib.works.map((w) => w.id));
+      const before = new Set(this.full.works.map((w) => w.id));
       const r = await this.service.rescan();
       if (token !== this.loadToken) return;
       const after = new Set(r.lib.works.map((w) => w.id));
@@ -1270,7 +1402,7 @@ export class App {
   // 都作用在“目标那一幅”（posT 四舍五入），和原型一致
 
   private persist(): void {
-    this.service.save(this.lib);
+    this.service.save(this.full);
   }
 
   private persistSoon(): void {
@@ -1400,6 +1532,7 @@ export class App {
     if (!this.target()) return;
     assignWork(this.lib, this.controller.targetIndex(), seriesId);
     this.membersDirty = true;
+    this.usedSeries = null;
     this.edited();
   };
 
@@ -1435,6 +1568,226 @@ export class App {
     }
     this.finishEdit();
   };
+
+  // ───────────── 星级和按星筛选（2026-11-20） ─────────────
+
+  /**
+   * 给“目标那一幅”打星。点星星（fromKey = false）：点到已经是的那颗就清除；
+   * 数字键（fromKey = true）：1–5 直接设成几星，0 清除。
+   * 放大 / 全屏时信息卡看不见，底部提示条报一下
+   */
+  private rate(n: number, fromKey: boolean): void {
+    const w = this.target();
+    if (!w) return;
+    const before = clampRating(w.rating);
+    const next = fromKey ? clampRating(n) : toggleRating(before, n);
+    if (next === before) return;
+    if (next) w.rating = next;
+    else delete w.rating;
+    this.persistSoon();
+    const msg = next ? t('rating.toast', { stars: '★'.repeat(next) + '☆'.repeat(5 - next), n: next }) : t('rating.cleared');
+    this.hud.announce(msg);
+    if (this.controller.magnified) this.toast.show(msg);
+    this.controller.kick();
+  }
+
+  /** 只看 min 星以上（0 = 显示全部）。一幅够格的都没有就不切换，提示一下 */
+  setRatingFilter(min: number): void {
+    const m = clampRating(min);
+    if (m === this.ratingMin) return;
+    if (m > 0 && !countAtLeast(this.full.works, m)) {
+      this.toast.show(t('rating.none', { n: m }));
+      return;
+    }
+    if (this.ui.editing) this.finishEdit();
+    // 停在原来那一幅；它被筛掉了就停在它后面最近的一幅
+    const keep = this.target();
+    this.ratingMin = m;
+    this.lib = this.viewOf(this.full);
+    const at = keep ? this.full.works.indexOf(keep) : 0;
+    this.showView(viewIndexOf(this.full.works, this.lib.works, at), true);
+    this.updateFilterChip();
+    this.toast.show(m ? t('rating.filtered', { n: m, count: this.lib.works.length }) : t('rating.showAll'));
+    this.menu.refresh();
+  }
+
+  private updateFilterChip(): void {
+    const on = this.ratingMin > 0;
+    this.filterChip.hidden = !on;
+    if (!on) return;
+    this.filterChipText.textContent = `${this.ratingMin}+`;
+    const label = t('rating.clearFilter', { n: this.ratingMin });
+    this.filterChip.setAttribute('aria-label', label);
+    this.filterChip.title = label;
+  }
+
+  // ───────────── 命令面板（2026-11-20，Ctrl+K） ─────────────
+
+  openPalette(): void {
+    if (this.picker.active) return;
+    if (this.menu.isOpen) this.menu.close();
+    if (this.ctxMenu.isOpen) this.ctxMenu.close(false);
+    const actions = this.paletteActions();
+    const sets = this.setInfos().filter((s) => !s.current).map((s): SearchItem => ({
+      kind: 'set', label: s.name, sub: t('pill.count', { n: s.count }),
+      run: () => this.paletteGo(() => this.switchSet(s.id)),
+    }));
+    const boards = this.boardInfos().map((b): SearchItem => ({
+      kind: 'board', label: b.name, sub: t('board.count', { n: b.count }),
+      run: () => this.openBoard(b.id),
+    }));
+    this.cmdPalette.open({
+      initial: [...actions.filter((a) => a.featured).map((a) => a.item), ...sets, ...boards],
+      // 作品第一次输入时才建（几万幅时也只建一次）
+      all: () => [...actions.map((a) => a.item), ...this.paletteSeries(), ...sets, ...boards, ...this.paletteWorks()],
+    });
+  }
+
+  /** 从命令面板跳到预览里的某处：情绪板开着先关掉，焦点交还舞台 */
+  private paletteGo(fn: () => void): void {
+    if (this.boardView.isOpen) this.closeBoard();
+    fn();
+    const a = document.activeElement;
+    if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
+  }
+
+  /** 跳到某一幅（被星级筛选藏起来了就先显示全部） */
+  private goToWork(w: Work, seriesView = false): void {
+    this.paletteGo(() => {
+      if (this.ui.editing) this.finishEdit();
+      let i = this.lib.works.indexOf(w);
+      if (i < 0 && this.ratingMin > 0) {
+        this.setRatingFilter(0);
+        i = this.lib.works.indexOf(w);
+      }
+      if (i < 0) return;
+      this.controller.go(i);
+      const c = this.controller;
+      if (seriesView) c.setCamera({ zoomT: 1, magT: 0, fsT: 0 });
+      else if (c.inSeries) c.setCamera({ zoomT: 0, magT: 0, fsT: 0 });
+    });
+  }
+
+  private paletteWorks(): SearchItem[] {
+    return this.full.works.map((w) => ({
+      kind: 'work',
+      label: displayTitle(w),
+      sub: [w.date || t('date.unknown'), displayName(this.seriesOf(w)), w.rating ? '★'.repeat(w.rating) : '']
+        .filter(Boolean)
+        .join(' · '),
+      keywords: `${w.fileName ?? ''} ${w.customTitle ? w.title : ''}`,
+      run: () => this.goToWork(w),
+    }));
+  }
+
+  /** 系列：跳到这个系列最新的一幅，拉远到系列视图 */
+  private paletteSeries(): SearchItem[] {
+    const latest = new Map<string, Work>();
+    const count = new Map<string, number>();
+    for (const w of this.full.works) {
+      latest.set(w.series, w);
+      count.set(w.series, (count.get(w.series) ?? 0) + 1);
+    }
+    return this.lib.series
+      .filter((s) => latest.has(s.id))
+      .map((s) => ({
+        kind: 'series' as const,
+        label: displayName(s),
+        sub: t('pill.count', { n: count.get(s.id) ?? 0 }),
+        run: () => this.goToWork(latest.get(s.id)!, true),
+      }));
+  }
+
+  /** 常用操作；featured 的在没输入时就列出来 */
+  private paletteActions(): { item: SearchItem; featured?: boolean }[] {
+    const act = (label: string, run: () => void, o: { keywords?: string; shortcut?: string; sub?: string } = {}) =>
+      ({ kind: 'action' as const, label, run, ...o });
+    const out: { item: SearchItem; featured?: boolean }[] = [];
+    const add = (item: SearchItem, featured = false) => out.push({ item, featured });
+    const desktop = this.service.desktop;
+    const has = this.lib.works.length > 0;
+    if (desktop) {
+      add(act(t('palette.importFiles'), () => void this.importTo('files', this.service.current.id), { keywords: 'import open' }), true);
+      add(act(t('palette.importFolder'), () => void this.importTo('folder', this.service.current.id), { keywords: 'import folder' }), true);
+    }
+    if (this.ratingMin > 0) add(act(t('rating.showAll'), () => this.setRatingFilter(0), { keywords: 'rating star filter' }), true);
+    for (let n = 5; n >= 1; n--) {
+      if (n === this.ratingMin) continue;
+      add(act(t('rating.filterAtLeast', { n }), () => this.setRatingFilter(n), { keywords: `rating star filter ${'★'.repeat(n)}` }), n === 3 && this.ratingMin === 0);
+    }
+    if (has) {
+      for (const k of CHECK_KINDS) {
+        add(act(t(`check.${k}`), () => this.toggleCheck(k), {
+          shortcut: CHECK_KEYS[k], sub: t(this.checks[k] ? 'palette.on' : 'palette.off'), keywords: `check ${k}`,
+        }), true);
+      }
+      add(act(t('palette.first'), () => this.paletteGo(() => this.controller.go(0)), { keywords: 'first oldest' }));
+      add(act(t('palette.latest'), () => this.paletteGo(() => this.controller.go(this.lib.works.length - 1)), { keywords: 'last latest newest' }));
+      add(act(t('palette.fullscreen'), () => this.paletteGo(() => this.controller.toggleFullscreen()), { shortcut: 'F11', keywords: 'fullscreen' }));
+    }
+    add(act(t('palette.reduceTransparency'), () => toggleReduceTransparency(), {
+      sub: t(transparencyReduced() ? 'palette.on' : 'palette.off'), keywords: 'transparency glass accessibility',
+    }));
+    for (const p of ['light', 'dark', 'system'] as const) {
+      add(act(t('palette.theme', { mode: t(`theme.${p}`) }), () => setThemePref(p), { keywords: 'theme color scheme dark light' }));
+    }
+    if (desktop) add(act(t('view.refresh'), () => void this.refresh(), { shortcut: 'F5', keywords: 'refresh rescan' }));
+    add(act(t('sets.new').replace(/^\+\s*/, ''), this.newSet, { keywords: 'new collection set' }));
+    add(act(t('board.new'), this.newBoard, { keywords: 'new mood board' }));
+    add(act(t('about.menu'), () => void this.about.open(), { keywords: 'about version update' }));
+    return out;
+  }
+
+  // ───────────── 画师自检（2026-11-20）：翻转 / 灰度 / 模糊 ─────────────
+
+  toggleCheck(k: CheckKind): void {
+    this.checks = toggleCheck(this.checks, k);
+    this.applyChecks();
+    const name = t(`check.${k}`);
+    this.toast.show(this.checks[k] ? t('check.toastOn', { name, key: CHECK_KEYS[k] }) : t('check.toastOff', { name }));
+  }
+
+  private clearChecks(): void {
+    if (!anyCheck(this.checks)) return;
+    this.checks = { ...NO_CHECKS };
+    this.applyChecks();
+    this.toast.show(t('check.allOff'));
+  }
+
+  /**
+   * 效果都写在 CSS 里（styles.css 的“画师自检”一节），这里只在 .app 上挂类：
+   * check-flip / check-gray / check-blur，有一项开着时再挂 has-checks（全屏时工具条常驻）
+   */
+  private applyChecks(): void {
+    for (const k of CHECK_KINDS) this.root.classList.toggle(`check-${k}`, this.checks[k]);
+    this.root.classList.toggle('has-checks', anyCheck(this.checks));
+    this.checkBar.set(this.checks);
+    this.updateCheckChip();
+    this.menu.refresh();
+  }
+
+  private updateCheckChip(): void {
+    const on = CHECK_KINDS.filter((k) => this.checks[k]);
+    this.checkChip.hidden = !on.length;
+    if (!on.length) return;
+    this.checkChipIcons.replaceChildren(...on.map((k) => svgIcon(CHECK_ICONS[k], 14)));
+    const label = t('check.clearAll', { names: on.map((k) => t(`check.${k}`)).join(t('list.sep')) });
+    this.checkChip.setAttribute('aria-label', label);
+    this.checkChip.title = label;
+  }
+
+  /**
+   * 单键快捷键（数字打星、H / G / B 自检）能不能响应：没按修饰键、不在输入框里、
+   * 情绪板 / 拖起阵列 / 菜单 / 对话框 / 命令面板都没开着
+   */
+  private shortcutAllowed(e: KeyboardEvent): boolean {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.repeat) return false;
+    const target = e.target as Element | null;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return false;
+    if (target?.closest?.('.menu-panel, .ctx-menu, .about-dialog, .popover, .palette')) return false;
+    if (this.blockKeys() || this.menu.isOpen || this.ui.editing) return false;
+    return !this.loading && this.lib.works.length > 0;
+  }
 
   // ───────────── 右键菜单：作品 / 系列（2026-11-17 改，原来在编辑卡里）；源文件都不动 ─────────────
 
@@ -1530,15 +1883,16 @@ export class App {
     if (this.ui.editing) this.finishEdit();
     finalizeNames(this.lib);
     return {
-      works: this.lib.works,
-      seriesOf: new Map(this.lib.works.map((w) => [w.id, w.series])),
-      series: this.lib.series.map((s) => ({ ...s })),
+      works: this.full.works,
+      viewWorks: this.lib.works,
+      seriesOf: new Map(this.full.works.map((w) => [w.id, w.series])),
+      series: this.full.series.map((s) => ({ ...s })),
       removed: [],
       focusId: this.target()?.id,
     };
   }
 
-  /** 删除之后停在哪：原来那幅还在就停在它，否则停在原位置往后第一幅没被删的（没有就往前找） */
+  /** 删除之后停在哪：原来那幅还在就停在它，否则停在原位置往后第一幅没被删的（没有就往前找）。old、返回值都是屏幕上那一份的下标 */
   private focusAfter(old: readonly Work[], focusId: string | undefined, gone: ReadonlySet<string>): number {
     const works = this.lib.works;
     if (!works.length) return 0;
@@ -1550,7 +1904,7 @@ export class App {
   /** 换掉作品列表后（删除、撤销）：镜头不变，焦点交还舞台 */
   private afterRemoval(focus: number): void {
     const hadFocus = this.root.contains(document.activeElement) && document.activeElement !== this.stage.section;
-    this.setLibrary(this.lib, focus, true, true);
+    this.showView(focus, true);
     this.render();
     if (hadFocus) this.stage.section.focus({ preventScroll: true });
   }
@@ -1559,24 +1913,27 @@ export class App {
     const w = this.lib.works[index];
     if (!w) return;
     const snap = this.snapshotForUndo();
-    const removed = removeWorks(this.lib, new Set([w.id]));
+    const removed = removeWorks(this.full, new Set([w.id]));
+    if (this.lib !== this.full) removeWorks(this.lib, new Set(removed));
     snap.removed = removed;
-    this.service.removeWorks(removed, this.lib);
-    this.afterRemoval(this.focusAfter(snap.works, snap.focusId, new Set(removed)));
+    this.service.removeWorks(removed, this.full);
+    this.afterRemoval(this.focusAfter(snap.viewWorks, snap.focusId, new Set(removed)));
     this.offerUndo(snap, t('toast.workRemoved', { title: displayTitle(w) }));
   }
 
   private deleteSeriesById(seriesId: string, withWorks: boolean): void {
     const s = this.seriesById.get(seriesId);
     const name = s ? displayName(s) : t('series.unassigned');
-    const n = this.lib.works.filter((w) => w.series === seriesId).length;
+    // 按星筛选时也是整个系列（包括被筛掉的那些）
+    const n = this.full.works.filter((w) => w.series === seriesId).length;
     const snap = this.snapshotForUndo();
-    const removed = deleteSeries(this.lib, seriesId, withWorks);
+    const removed = deleteSeries(this.full, seriesId, withWorks);
+    if (withWorks && this.lib !== this.full) removeWorks(this.lib, new Set(removed));
     this.indexSeries();
     snap.removed = removed;
     if (withWorks) {
-      this.service.removeWorks(removed, this.lib);
-      this.afterRemoval(this.focusAfter(snap.works, snap.focusId, new Set(removed)));
+      this.service.removeWorks(removed, this.full);
+      this.afterRemoval(this.focusAfter(snap.viewWorks, snap.focusId, new Set(removed)));
       this.offerUndo(snap, t('toast.seriesRemoved', { name, n }));
     } else {
       this.persist();
@@ -1596,11 +1953,13 @@ export class App {
     if (this.undo !== snap) return;
     this.undo = null;
     if (this.ui.editing) this.finishEdit();
-    this.lib.works = snap.works;
-    for (const w of this.lib.works) w.series = snap.seriesOf.get(w.id) ?? w.series;
-    this.lib.series = snap.series.map((s) => ({ ...s }));
+    this.full.works = snap.works;
+    for (const w of this.full.works) w.series = snap.seriesOf.get(w.id) ?? w.series;
+    this.full.series = snap.series.map((s) => ({ ...s }));
+    // 按星筛选时重新筛一遍（期间可能换过筛选线）
+    this.lib = this.viewOf(this.full);
     this.indexSeries();
-    this.service.restoreWorks(snap.removed, this.lib);
+    this.service.restoreWorks(snap.removed, this.full);
     const focus = Math.max(0, this.lib.works.findIndex((w) => w.id === snap.focusId));
     this.afterRemoval(focus);
     this.toast.show(t('toast.undone'));
@@ -1631,6 +1990,10 @@ export class App {
     }
     this.empty.set(empty, this.loading || this.importing);
     if (empty) {
+      if (this.magClass) {
+        this.magClass = false;
+        this.root.classList.remove('is-mag');
+      }
       // HANDOFF §8 空状态：舞台只显示玻璃网格
       this.stage.render({
         works, pos: 0, posV: 0, zoom: 0, zoomV: 0, press: m.press, ox: m.ox, oy: m.oy, mot: 0, cur: -1,
@@ -1732,6 +2095,12 @@ export class App {
 
     // 放大时信息卡、时间轴、提示、系列胶囊淡出，不挡画
     const uiOpacity = 1 - mag;
+    // 放大着（含全屏）：画师自检的工具条浮出来（CSS 按这个类）
+    const magOn = mag > 0.5;
+    if (magOn !== this.magClass) {
+      this.magClass = magOn;
+      this.root.classList.toggle('is-mag', magOn);
+    }
     this.infoFade.set('opacity', String(Math.round(uiOpacity * 1000) / 1000));
     this.infoFade.set('pointer-events', mag > 0.5 ? 'none' : 'auto');
     this.timelineFade.set('opacity', String(Math.round(uiOpacity * 1000) / 1000));
@@ -1767,7 +2136,7 @@ export class App {
     }
     // 当前作品在系列里的序号（系列成员按时间先后排好的下标，二分查找）
     const index = Math.max(0, sortedIndexOf(series, cur)) + 1;
-    this.info.render({ work: wc, series: sc, count: series.length, index, frac, zoom: zc, edit });
+    this.info.render({ work: wc, series: sc, count: series.length, index, frac, zoom: zc, edit, interactive: mag <= 0.5 });
     this.timeline.render({
       works, cur, pos: m.pos, vel: m.posV, labelsVersion: this.labelsVersion, members: series,
       // 同系列刻度用系列的主题色高亮；未归类保持原来的灰色（2026-11-18）

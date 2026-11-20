@@ -54,15 +54,17 @@ src/
   controller.ts    rAF 循环、弹簧推进、指针 / 滚轮 / 键盘输入、导航
   engine/          纯函数，都有单测：弹簧、画作映射、玻璃避让、手势、滚轮档位、全屏缩放、
                    放大框、时间轴刻度、取主题色、月份、情绪板几何（board-layout）、网格空间索引（box-grid）、
-                   拖起阵列（picker）
+                   拖起阵列（picker）、星级和按星筛选（rating）、画师自检（checks）、命令面板搜索（search）
   view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器、关于对话框、
-                   拖起阵列（board-picker.ts）、情绪板画布（board/）……
+                   拖起阵列（board-picker.ts）、情绪板画布（board/）、星星（stars.ts）、
+                   自检工具条（check-bar.ts）、命令面板（palette.ts）……
   data/            作品库模型、保存、导入和扫描、缩略图队列、取色队列、Rust 调用、
                    情绪板（boards.ts 数据和增删改，board-store.ts 保存）
   locales/         除中文和英文以外的 10 种界面语言
   i18n.ts          中文、英文文案和语言切换
   tokens.ts        设计变量（名字和 HANDOFF §3 一致）
   theme.ts         浅色 / 深色 / 跟随系统
+  transparency.ts  降低透明度（跟随系统或偏好设置，挂 <html data-transparency>）
   prefs.ts         偏好设置
   updater.ts       自动更新的状态机
   perf.ts          性能探针
@@ -72,6 +74,7 @@ src-tauri/src/
   scan.rs          扫描导入的文件和文件夹，读尺寸，RAW 和同名 JPG 配对
   dates.rs         EXIF、XMP 日期
   thumbs.rs        缩略图和显示图
+  color.rs         按图片里嵌的 ICC 配置文件把像素转成 sRGB
   raw.rs           从相机 RAW 里找内嵌的 JPEG 预览
   svg.rs           读 SVG 的尺寸
   asset_scope.rs   asset 协议的访问范围
@@ -82,7 +85,9 @@ scripts/bench-board.ts  情绪板几何算法的压测
 
 ## 作品库和保存
 
-作品库存在应用数据目录（`app.peekit`）的 `library.json` 里，用 tauri-plugin-store 读写，key 是 `sets`。格式是 v3：一组预览集，每个预览集有自己的导入来源、系列、按文件路径记的归属、自定义标题、主色和扫描缓存（`src/data/library.ts`、`src/data/sets.ts`）。旧版的 `library` key 只在启动时读一次，迁移成第一个预览集。
+作品库存在应用数据目录（`app.peekit`）的 `library.json` 里，用 tauri-plugin-store 读写，key 是 `sets`。格式是 v3：一组预览集，每个预览集有自己的导入来源、系列、按文件路径记的归属、自定义标题、星级（`rating`，1–5，没打星就没有这个字段）、主色和扫描缓存（`src/data/library.ts`、`src/data/sets.ts`）。旧版的 `library` key 只在启动时读一次，迁移成第一个预览集。
+
+按星筛选时，`App` 同时持有全部作品（`full`）和屏幕上显示的作品（`lib`）。不筛选时两者是同一个对象；筛选时 `lib.works` 是 `full.works` 的子集（同一批作品对象），`lib.series` 是转到 `full.series` 的存取器。按下标操作的地方（编辑、跳转、渲染）都用 `lib`；会换掉作品数组的操作（移除、删除系列、撤销）和保存都对着 `full` 做，然后从 `full` 重新得出 `lib`。筛选线只在内存里，不存盘。
 
 导入过的文件夹每次启动都重新扫描，新加的图会自动出现。修改时间和大小都没变的文件直接复用上次读到的尺寸和日期。日期依次取 EXIF、XMP、文件修改时间，作品按日期从早到晚排，日期相同按文件名。
 
@@ -90,11 +95,15 @@ scripts/bench-board.ts  情绪板几何算法的压测
 
 预览集修改后 800ms 写一次盘，情绪板 600ms。切换预览集前和安装更新前会立刻写盘（`LibraryService.flush()`、`BoardStore.flush()`），因为安装程序会直接关掉应用。
 
-语言、深浅色、偏好设置、计数圆环的显示方式记在 localStorage（`peekit:` 开头的 key）。
+语言、深浅色、偏好设置（包括降低透明度，没拨过开关时是 null，表示跟随系统）、计数圆环的显示方式记在 localStorage（`peekit:` 开头的 key）。画师自检的开关只在内存里。
 
 ## 图片
 
-缩略图由 Rust 生成：解码，按 EXIF 方向转正，缩到长边 1600，编码成质量 82 的有损 WebP，缓存在应用缓存目录的 `thumbs/`。缓存键是路径、修改时间、大小的 FNV-1a 哈希，原图改了会重新生成。生成时顺便算出主色，图片还没加载出来时用它做卡片底色。
+缩略图由 Rust 生成：解码，按 EXIF 方向转正，缩到长边 1600，按图片里嵌的 ICC 配置文件转成 sRGB，编码成质量 82 的有损 WebP，缓存在应用缓存目录的 `thumbs/c1/`。缓存键是路径、修改时间、大小的 FNV-1a 哈希，原图改了会重新生成。生成时顺便算出主色，图片还没加载出来时用它做卡片底色。
+
+色彩管理（`color.rs`，用 image 本来就依赖的 moxcms）：缩略图和 TIFF / RAW 的显示图是不带配置文件的 WebP，界面按 sRGB 显示；PNG、JPG、WebP 原图由 WebView2 直接显示，它会按原图里的配置文件做色彩管理。所以 Display P3、Adobe RGB 这些图要先转成 sRGB，停留 300ms 换成原图时颜色才不会跳。只处理 RGB 和灰度配置文件，解析不了的和 CMYK 照原样。HDR 编码（PQ、HLG）的配置文件也照原样：按相对色度转会把 PQ 的 1 万尼特当成白，缩略图几乎全黑，要转得先做色调映射。认 HDR 看配置文件的 CICP 标签，没有标签的用中灰试转（转出来太暗就当 HDR）。HDR 还有两处没处理：带增益图的 JPEG（Ultra HDR）缩略图只有基础的 SDR 图；32 位浮点 TIFF 按 0–1 截断，会偏暗。转换在缩小之后做，像素少，开销很小。复制图像用的原尺寸 PNG 不转（保留 16 位）。相机 JPEG 只用 EXIF 标记 Adobe RGB、没有嵌入配置文件的，两边都不认。
+
+缩略图的生成方式变了（比如这次加色彩转换），就把 `thumbs.rs` 的 `CACHE_VERSION` 加一：新缩略图放进新的子目录，全部按需重新生成；启动时后台删掉上一级 `thumbs/` 里直接放着的旧文件。子目录还在 `tauri.conf.json` 的 `$APPCACHE/thumbs/**` 范围里。
 
 情绪板缩得很小时用长边 384 的小缩略图（`make_thumbnail` 的 `edge` 参数，文件名后面加 `-384`）。有 1600 的缩略图时直接从它缩，比从原图快得多。
 

@@ -24,13 +24,20 @@
 //     + 新建情绪板
 //   右键情绪板：修改名称 / 创建副本 / 删除情绪板。两种列表共用 listRow
 //
+// 2026-11-20：
+// - 最上面一行“搜索…  Ctrl K”，打开命令面板（palette.ts）
+// - “查看 ›”里加了星级筛选（一行 5 颗星）和画师自检三行（水平翻转 H / 灰度 G / 模糊 B，点了不关菜单）
+// - 偏好设置加“显示 → 降低透明度”（transparency.ts）
+//
 // 面板内容在每次打开 / 切换视图 / 改名删除后重建（用户操作时，不在每帧）。
 // 进出二级视图时有过渡（2026-11-17 新增）：旧内容滑出淡出、新内容从另一侧滑入，面板高度跟着过渡。
 import { LANGS, lang, langLocalName, LANG_NATIVE, langTag, setLang, t, type MessageKey } from '../i18n';
 import { setThemePref, themePref } from '../theme';
 import { prefs, setPref, wheelCanToggleFullscreen, type Prefs } from '../prefs';
+import { toggleReduceTransparency, transparencyReduced } from '../transparency';
 import {
-  el, svgIcon, ICON_CHECK, ICON_DOWNLOAD, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_SLIDERS, ICON_TRASH,
+  el, svgIcon, ICON_BLUR, ICON_CHECK, ICON_DOWNLOAD, ICON_FLIP, ICON_GRAY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV,
+  ICON_SEARCH, ICON_SLIDERS, ICON_TRASH,
 } from './dom';
 import { percentOf, type UpdateState } from '../updater';
 import { showsUpdateRow, updateRowLabel } from './update-labels';
@@ -39,6 +46,9 @@ import { Flyout } from './flyout';
 import { ThemeSwitch } from './theme-switch';
 import { menuPoint, type CtxItem } from './context-menu';
 import { setConfirmRow, setContextItems, setRenameRow } from './set-rows';
+import { StarRow } from './stars';
+import { CHECK_KEYS, CHECK_KINDS, type CheckKind } from '../engine/checks';
+import { toggleRating } from '../engine/rating';
 
 const ICON_MENU = ['M4 7h16', 'M4 12h16', 'M4 17h16'];
 
@@ -94,6 +104,14 @@ export interface MenuHandlers {
   renameBoard: (id: string, name: string) => void;
   deleteBoard: (id: string) => void;
   duplicateBoard: (id: string) => string | null;
+  /** 星级筛选（2026-11-20）：现在只看几星以上（0 = 全部），以及改筛选线 */
+  ratingFilter: () => number;
+  setRatingFilter: (n: number) => void;
+  /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊现在开没开，切换一项 */
+  checks: () => Readonly<Record<CheckKind, boolean>>;
+  toggleCheck: (k: CheckKind) => void;
+  /** 打开命令面板（Ctrl+K，2026-11-20） */
+  openPalette: () => void;
 }
 
 export class AppMenu {
@@ -106,6 +124,7 @@ export class AppMenu {
   private viewFly: Flyout;
   private langFly: Flyout;
   private themeSwitch: ThemeSwitch;
+  private filterStars: StarRow;
   /** 偏好设置说明的浮动标签（和子菜单一样挂在菜单根节点里，主面板会裁切） */
   private tip: HTMLElement;
   private button: HTMLButtonElement;
@@ -136,6 +155,16 @@ export class AppMenu {
       this.rebuild();
     });
     this.themeSwitch = new ThemeSwitch((p) => setThemePref(p));
+    // 星级筛选（2026-11-20）：点第 n 颗 = 只看 n 星以上，再点同一颗 = 显示全部
+    this.filterStars = new StarRow({
+      label: (n) => t('rating.filterAtLeast', { n }),
+      onPick: (n) => {
+        this.handlers.setRatingFilter(toggleRating(this.handlers.ratingFilter(), n));
+        this.filterStars.set(this.handlers.ratingFilter());
+      },
+      size: 15,
+      cls: 'menu-stars',
+    });
     this.viewFly = new Flyout(this.root, () => this.viewItems(), () => t('menu.view'));
     // 语言列表按内容变宽（最宽 320px）：本族语名字永远完整显示，灰色副标签放不下才省略
     this.langFly = new Flyout(this.root, () => this.langItems(), () => t('view.language'), 'menu-flyout--lang');
@@ -144,6 +173,16 @@ export class AppMenu {
 
   get isOpen(): boolean {
     return this.dropdown.isOpen;
+  }
+
+  close(): void {
+    this.dropdown.close(false);
+  }
+
+  /** 菜单以外改了筛选线、自检开关（快捷键、状态标签、命令面板）：开着的“查看”子菜单跟着更新 */
+  refresh(): void {
+    this.filterStars.set(this.handlers.ratingFilter());
+    if (this.isOpen) this.viewFly.refresh();
   }
 
   // ───────────── 构建面板 ─────────────
@@ -235,7 +274,14 @@ export class AppMenu {
     // 有新版本时，最上面一行“更新到 x.y.z”（2026-11-18 自动更新）
     const update = this.updateRow();
     if (update) out.push(update, this.divider());
+    // 搜索（命令面板，2026-11-20）：作品、系列、预览集、情绪板和常用操作
+    const search = this.item(t('palette.menu'), () => {
+      this.dropdown.close(false);
+      this.handlers.openPalette();
+    }, { icon: ICON_SEARCH, trail: el('span', { class: 'menu-kbd' }, ['Ctrl K']) });
     out.push(
+      search,
+      this.divider(),
       this.item(t('menu.importFilesTo'), () => this.go('files'), { trail: chevron() }),
       this.item(t('menu.importFolderTo'), () => this.go('folder'), { trail: chevron() }),
       view,
@@ -339,7 +385,33 @@ export class AppMenu {
       this.dropdown.close(true);
       this.handlers.refresh();
     }, { trail: el('span', { class: 'menu-kbd' }, ['F5']) });
-    return [scheme, language, this.divider(), refresh];
+    // 星级筛选（2026-11-20）：一行文字 + 5 颗星，当前筛选线以内的星亮着
+    this.filterStars.set(this.handlers.ratingFilter());
+    const filter = el('div', { class: 'menu-switch-row menu-stars-row', role: 'none' }, [
+      el('span', { class: 'menu-label', 'aria-hidden': 'true' }, [t('rating.filterMenu')]),
+      this.filterStars.root,
+    ]);
+    // 画师自检（2026-11-20）：翻转 / 灰度 / 模糊，点了不关菜单，原地打勾
+    const icons: Record<CheckKind, string[]> = { flip: ICON_FLIP, gray: ICON_GRAY, blur: ICON_BLUR };
+    const state = this.handlers.checks();
+    const checks = CHECK_KINDS.map((k) => {
+      const b = this.item(t(`check.${k}`), () => {
+        this.handlers.toggleCheck(k);
+        this.viewFly.refresh();
+        this.viewFly.items().find((x) => x.dataset.check === k)?.focus({ preventScroll: true });
+      }, {
+        icon: icons[k],
+        trail: el('span', { class: 'menu-trail' }, [
+          ...(state[k] ? [svgIcon(ICON_CHECK, 15)] : []),
+          el('span', { class: 'menu-kbd' }, [CHECK_KEYS[k]]),
+        ]),
+        role: 'menuitemcheckbox',
+      });
+      b.setAttribute('aria-checked', String(state[k]));
+      b.dataset.check = k;
+      return b;
+    });
+    return [scheme, language, this.divider(), filter, ...checks, this.divider(), refresh];
   }
 
   /** 界面语言：本族语名字 + 当前界面语言里的名字（灰色），当前语言打勾 */
@@ -505,7 +577,13 @@ export class AppMenu {
     );
     // 自动检查更新（2026-11-18）：只查不下载，关掉后还能在“关于”里手动检查
     const auto = this.prefRow('autoUpdate', t('prefs.autoUpdate'), () => setPref('autoUpdate', !prefs().autoUpdate));
-    const rows = [back, this.divider(), this.caption('prefs.wheel'), flip, fs, this.divider(), this.caption('prefs.update'), auto];
+    // 降低透明度（2026-11-20）：默认跟随系统，拨过一次就按这里的
+    const glass = this.prefRow('reduceTransparency', t('prefs.reduceTransparency'), () => toggleReduceTransparency());
+    const rows = [
+      back, this.divider(), this.caption('prefs.wheel'), flip, fs,
+      this.divider(), this.caption('prefs.display'), glass,
+      this.divider(), this.caption('prefs.update'), auto,
+    ];
     this.syncPrefs(rows);
     return rows;
   }
@@ -582,6 +660,11 @@ export class AppMenu {
         hint: t(p.wheelFlip ? 'prefs.wheelFullscreenOff' : 'prefs.wheelFullscreenHint'),
       },
       autoUpdate: { on: p.autoUpdate, disabled: false, hint: t('prefs.autoUpdateHint') },
+      reduceTransparency: {
+        on: transparencyReduced(),
+        disabled: false,
+        hint: t('prefs.reduceTransparencyHint') + (p.reduceTransparency === null ? t('prefs.followingSystem') : ''),
+      },
     };
     for (const row of rows) {
       const key = row.dataset.pref as keyof Prefs | undefined;

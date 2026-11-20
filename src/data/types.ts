@@ -44,6 +44,8 @@ export interface Work {
   thumb?: string;
   /** 读取或生成缩略图失败 */
   broken?: boolean;
+  /** 星级 1–5（2026-11-20）；没打星就没有这个字段 */
+  rating?: number;
 }
 
 export interface Library {

@@ -619,8 +619,15 @@ pub fn pick(previews: &[Preview], min_edge: Option<u32>) -> Vec<Preview> {
     v
 }
 
-/// 解码 RAW 的内嵌预览并转正。min_edge 见 pick；挑中的那张坏了就换下一张
+/// 测试用：只要图，不要配置文件
+#[cfg(test)]
 pub fn decode(path: &Path, min_edge: Option<u32>) -> Result<DynamicImage, String> {
+    decode_with_icc(path, min_edge).map(|(img, _)| img)
+}
+
+/// 解码 RAW 的内嵌预览并转正，连同预览 JPEG 里嵌的 ICC 配置文件（2026-11-20，色彩管理用，见 color.rs）。
+/// min_edge 见 pick；挑中的那张坏了就换下一张
+pub fn decode_with_icc(path: &Path, min_edge: Option<u32>) -> Result<(DynamicImage, Option<Vec<u8>>), String> {
     let info = probe(path, true)?;
     let order = pick(&info.previews, min_edge);
     if order.is_empty() {
@@ -630,14 +637,15 @@ pub fn decode(path: &Path, min_edge: Option<u32>) -> Result<DynamicImage, String
     let mut last = String::new();
     for p in order {
         let Some(bytes) = read_vec(&mut f, p.offset, p.len) else { continue };
-        let attempt = (|| -> Result<DynamicImage, String> {
+        let attempt = (|| -> Result<(DynamicImage, Option<Vec<u8>>), String> {
             let mut dec = image::codecs::jpeg::JpegDecoder::new(Cursor::new(bytes)).map_err(|e| e.to_string())?;
             let own = dec.orientation().unwrap_or(Orientation::NoTransforms);
+            let icc = dec.icc_profile().ok().flatten();
             let mut img = DynamicImage::from_decoder(dec).map_err(|e| e.to_string())?;
             // RAW 里写了方向就按它（预览像素本身没转过）；没写就按预览 JPEG 自己的 EXIF
             let o = Orientation::from_exif(info.orientation as u8).unwrap_or(own);
             img.apply_orientation(o);
-            Ok(img)
+            Ok((img, icc))
         })();
         match attempt {
             Ok(img) => return Ok(img),

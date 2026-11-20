@@ -119,7 +119,8 @@ export class Flyout {
   }
 
   items(): HTMLElement[] {
-    return [...this.el.querySelectorAll<HTMLElement>('[role^="menuitem"], .ts-stop[aria-checked="true"]')];
+    // 颜色模式开关、星级筛选那一排各算一项（当前那一档 / 那颗星），左右键在它们自己里面换
+    return [...this.el.querySelectorAll<HTMLElement>('[role^="menuitem"], .ts-stop[aria-checked="true"], .stars .star[tabindex="0"]')];
   }
 
   private scheduleClose(): void {

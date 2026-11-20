@@ -10,6 +10,7 @@ import type { Library, Series, Work } from './types';
 import { nextSeriesColor, newSeriesId, SERIES_NAME_MAX, UNSORTED_ID } from './series-ops';
 import { t } from '../i18n';
 import { UNASSIGNED_COLOR, color } from '../tokens';
+import { clampRating } from '../engine/rating';
 
 export const SAVE_VERSION = 2;
 export { UNSORTED_ID };
@@ -36,6 +37,8 @@ export interface SavedWork {
   height?: number;
   /** 已从预览集移除（源文件不动）：扫描时跳过；再次导入这个文件或所在文件夹时恢复 */
   removed?: boolean;
+  /** 星级 1–5（2026-11-20，字段可选，格式版本不变） */
+  rating?: number;
 }
 
 export interface SavedLibrary {
@@ -226,6 +229,8 @@ export function mergeScan(
       height: it.height,
     };
     if (prev?.customTitle) w.customTitle = prev.customTitle;
+    const rating = clampRating(prev?.rating);
+    if (rating) w.rating = rating;
     // RAW + JPG 合并成一幅时，同名 RAW 原片的路径（每次扫描都重新配对，不存盘）
     if (it.raw) w.raw = it.raw;
     works.push(w);
@@ -244,6 +249,8 @@ export function applyToSample(lib: Library, saved: SavedLibrary): void {
     if (!sw) continue;
     if (sw.series) w.series = sw.series;
     if (sw.customTitle) w.customTitle = sw.customTitle;
+    const rating = clampRating(sw.rating);
+    if (rating) w.rating = rating;
   }
 }
 
@@ -255,6 +262,9 @@ export function updateSaved(saved: SavedLibrary, lib: Library): void {
     const next: SavedWork = { ...prev, series: w.series };
     if (w.customTitle?.trim()) next.customTitle = w.customTitle;
     else delete next.customTitle;
+    const rating = clampRating(w.rating);
+    if (rating) next.rating = rating;
+    else delete next.rating;
     if (w.path && w.bg !== color['color-chip']) next.color = w.bg;
     saved.works[w.id] = next;
   }

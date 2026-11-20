@@ -3011,7 +3011,8 @@ button:focus-visible {
 .app.is-board .info,
 .app.is-board .hint,
 .app.is-board .empty-state,
-.app.is-board .timeline {
+.app.is-board .timeline,
+.app.is-board .check-bar {
   visibility: hidden;
 }
 
@@ -3681,4 +3682,434 @@ button:focus-visible {
 
 .info .chip--drag:active {
   cursor: grabbing;
+}
+
+/* ───────────── 星级（2026-11-20） ─────────────
+   一排 5 颗星：没打的是描边（次要文字色），打了的用强调色（和时间轴指示条同一个黄）填满；
+   悬停预览时，要新点亮的星是淡一点的黄，要熄掉的星变淡 */
+.stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-dashed);
+  cursor: pointer;
+  transition: color 120ms ease, transform 120ms ease;
+}
+
+.star svg {
+  stroke-width: 1.6;
+  transition: fill 120ms ease;
+}
+
+.star.is-on {
+  color: var(--color-accent);
+}
+
+.star.is-on svg {
+  fill: var(--color-accent);
+}
+
+.star.is-preview {
+  color: var(--color-accent);
+}
+
+.star.is-preview svg {
+  fill: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.star.is-dim {
+  opacity: 0.45;
+}
+
+.star:hover {
+  transform: scale(1.12);
+}
+
+.star:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: -2px;
+}
+
+/* 信息卡：日期（和源文件名）下面，左边和文字对齐 */
+.info-stars {
+  margin: 8px 0 0 -5px;
+}
+
+/* 查看菜单里的星级筛选：右对齐，和颜色模式开关同一列 */
+.menu-stars-row .stars {
+  margin-left: auto;
+}
+
+/* ───────────── 字标后面的状态标签（2026-11-20） ─────────────
+   星级筛选（★ 3+ ×）、画师自检（开着的几项图标 ×）开着时显示，点了关掉。和预览集胶囊一样的文字按钮 */
+.wordmark-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pill);
+  color: var(--color-text);
+  font: 500 13px/1 var(--font-family-mono);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms ease;
+}
+
+.status-chip > svg:first-child {
+  color: var(--color-accent);
+  fill: var(--color-accent);
+}
+
+.status-chip-icons {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.status-chip-x {
+  display: inline-flex;
+  margin-left: 2px;
+  color: var(--color-text-secondary);
+}
+
+.status-chip:hover {
+  background: var(--color-chip);
+}
+
+.status-chip:hover .status-chip-x {
+  color: var(--color-text);
+}
+
+.status-chip:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
+}
+
+/* ───────────── 画师自检（2026-11-20）：水平翻转 / 灰度 / 模糊 ─────────────
+   .app 上的 check-flip / check-gray / check-blur 控制。舞台的画作（.art）、系列缩略图（.thumb）、
+   放大层（.mag-frame）都跟着变；情绪板不变。
+   - 翻转：画布和动图层水平镜像（只改 transform，不重绘）；读图失败的那行小字反过来再镜像一次
+   - 灰度：画布和动图层去色
+   - 模糊（眯眼看大关系）：模糊画布里面的图，画布自己裁掉溢出的部分，卡片边缘还是清楚的。
+     模糊半径约是画面高度的 1.4%，按各自的排版尺寸给（--u 是舞台单位）
+   每帧写的 filter 在外层（.art / .thumb 本身，景深模糊和变暗），和这里的叠加，互不覆盖 */
+.art {
+  --check-blur: calc(var(--u) * 0.8);
+}
+
+.thumb {
+  --check-blur: calc(var(--u) * 0.36);
+}
+
+.mag-frame {
+  --check-blur: calc(var(--u) * 1.3);
+}
+
+.app.check-flip :is(.art, .thumb, .mag-frame) > :is(.art-canvas, .art-anim) {
+  transform: scaleX(-1);
+}
+
+.app.check-flip .art-canvas > .art-broken {
+  transform: scaleX(-1);
+}
+
+.app.check-gray :is(.art, .thumb, .mag-frame) > :is(.art-canvas, .art-anim) {
+  filter: grayscale(1);
+}
+
+.app.check-blur :is(.art, .thumb, .mag-frame) > .art-canvas > :not(.art-broken),
+.app.check-blur :is(.art, .thumb, .mag-frame) > .art-anim {
+  filter: blur(var(--check-blur));
+}
+
+.app.check-gray.check-blur :is(.art, .thumb, .mag-frame) > .art-anim {
+  filter: grayscale(1) blur(var(--check-blur));
+}
+
+/* 底部工具条：放大时一直在；全屏时有一项开着、或者鼠标靠近底边才浮出来；单幅和系列视图不显示 */
+.check-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 9;
+  display: flex;
+  gap: 4px;
+  padding: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-pill);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, 8px);
+  transition: opacity 200ms ease, transform 200ms ease, visibility 0s linear 200ms;
+  pointer-events: none;
+}
+
+.app.is-mag:not(.is-fullscreen) .check-bar,
+.app.is-mag.is-fullscreen.has-checks .check-bar,
+.app.is-mag.is-fullscreen.reveal-bottom .check-bar,
+.app.is-mag .check-bar:focus-within {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+  transition-delay: 0s;
+  pointer-events: auto;
+}
+
+.check-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.check-btn:hover {
+  background: var(--color-chip);
+  color: var(--color-text);
+}
+
+.check-btn.is-on {
+  background: var(--color-text);
+  color: var(--color-surface);
+}
+
+.check-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* 全屏时工具条和倍率胶囊都在底边：工具条出来时倍率胶囊往上让 */
+.app.is-fullscreen:is(.has-checks, .reveal-bottom) .zoom-badge {
+  bottom: 84px;
+}
+
+/* 全屏的深色底上：工具条用深色变量 */
+.app.is-fullscreen .check-bar {
+  background: var(--color-zoom-badge);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.app.is-fullscreen .check-btn {
+  color: var(--color-text-on-dark);
+}
+
+.app.is-fullscreen .check-btn:hover {
+  background: var(--color-window-btn-hover-dark);
+  color: var(--color-on-dark-strong);
+}
+
+.app.is-fullscreen .check-btn.is-on {
+  background: var(--color-on-dark-strong);
+  color: var(--color-on-dark-ink);
+}
+
+/* ───────────── 命令面板（2026-11-20，Ctrl+K） ─────────────
+   窗口上方居中的白色面板，样式和左上角菜单同一套（实色底、菜单圆角、面板阴影）；全屏时用深色变量 */
+.palette-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+
+.palette {
+  position: absolute;
+  left: 50%;
+  top: max(64px, 14vh);
+  width: min(600px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(100% - 96px));
+  padding: 6px;
+  background: var(--color-surface);
+  border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-panel);
+  color: var(--color-text);
+  opacity: 0;
+  transform: translate(-50%, -6px) scale(0.98);
+  transform-origin: 50% 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.palette-layer.is-open .palette {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.palette-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--color-divider);
+  margin-bottom: 6px;
+}
+
+.palette-glass {
+  display: inline-flex;
+  color: var(--color-text-secondary);
+}
+
+.palette-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: var(--font-input);
+  font-size: 16px;
+}
+
+.palette-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.palette-esc,
+.palette-kbd {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: var(--color-chip);
+  font: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.palette-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 12px;
+  border-radius: var(--radius-tile);
+  cursor: pointer;
+}
+
+.palette-row.is-active {
+  background: var(--color-chip);
+}
+
+.palette-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.palette-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.palette-label,
+.palette-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-label {
+  font: 400 14px/1.25 var(--font-family-sans);
+}
+
+.palette-sub {
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.palette-kind {
+  flex-shrink: 0;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+}
+
+.palette-empty {
+  margin: 0;
+  padding: 18px 12px 20px;
+  font: var(--font-caption);
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .palette,
+  .check-bar {
+    transition: none;
+  }
+}
+
+/* ───────────── 降低透明度（2026-11-20，偏好设置 → 显示；transparency.ts） ─────────────
+   半透明、上面又有字或要看清的几处改用实色底、去掉背景模糊；舞台的磨砂玻璃格不变 */
+:root[data-transparency='reduced'] .zoom-badge,
+:root[data-transparency='reduced'] .app.is-fullscreen .check-bar {
+  background: #262626;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:root[data-transparency='reduced'] .pick-scrim {
+  background: var(--color-bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+:root[data-transparency='reduced'] .pick-tile,
+:root[data-transparency='reduced'] .pick-tile--new,
+:root[data-transparency='reduced'] .pick-tile--add,
+:root[data-transparency='reduced'] .pick-tile.is-hover {
+  background: var(--color-surface);
+  border-color: var(--color-divider);
+}
+
+:root[data-transparency='reduced'] .pick-tile.is-hover {
+  border-color: var(--color-accent);
+}
+
+:root[data-transparency='reduced'] .drop-overlay {
+  background: var(--color-bg);
+}
+
+:root[data-transparency='reduced'] .board-edge {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }

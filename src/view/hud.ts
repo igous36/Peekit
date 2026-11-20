@@ -37,6 +37,8 @@ export class Hud {
   readonly wordmark: HTMLElement;
   /** 预览集胶囊放这里 */
   readonly setSlot: HTMLElement;
+  /** 计数后面的状态标签（2026-11-20）：星级筛选、画师自检开着时显示，点了关掉 */
+  readonly statusSlot: HTMLElement;
   readonly meter: HTMLElement;
   readonly pill: HTMLElement;
   readonly hint: HTMLElement;
@@ -69,11 +71,13 @@ export class Hud {
     // 2026-11-18：Peekit 从文字换成手写字标 SVG（view/wordmark.ts）
     this.counter = new Counter();
     this.setSlot = el('span', { class: 'wordmark-slot' });
+    this.statusSlot = el('span', { class: 'wordmark-status' });
     this.mark = markSvg(PEEKIT, WORDMARK_HEIGHT, 'wordmark-name');
     this.wordmark = el('div', { class: 'wordmark' }, [
       this.mark,
       this.setSlot,
       this.counter.root,
+      this.statusSlot,
     ]);
 
     // 左侧刻度（2026-11-17 改成三档）：上 = 放大，中间刻线 = 单幅，下 = 系列视图；

@@ -169,6 +169,41 @@ describe('保存格式', () => {
   });
 });
 
+describe('星级（2026-11-20）', () => {
+  it('打的星存进作品库，再扫描时套回来；清除后从存档里去掉', () => {
+    const saved = emptySaved();
+    const scan = [item('D:/p/a.png'), item('D:/p/b.png', { ts: 1_700_000_000_001 })];
+    const first = mergeScan(saved, scan, ids).lib;
+    first.works[0].rating = 4;
+    updateSaved(saved, first);
+    expect(saved.works['D:/p/a.png'].rating).toBe(4);
+    expect(saved.works['D:/p/b.png'].rating).toBeUndefined();
+
+    const again = mergeScan(parseSaved(JSON.parse(JSON.stringify(saved)))!, scan, ids).lib;
+    expect(again.works.map((w) => w.rating)).toEqual([4, undefined]);
+
+    delete again.works[0].rating;
+    updateSaved(saved, again);
+    expect('rating' in saved.works['D:/p/a.png']).toBe(false);
+  });
+
+  it('存档里星级不对（比如手改成 9）当没打星', () => {
+    const saved = emptySaved();
+    saved.works['D:/p/a.png'] = { rating: 9 };
+    expect(mergeScan(saved, [item('D:/p/a.png')], ids).lib.works[0].rating).toBeUndefined();
+  });
+
+  it('示例数据（浏览器调试）也能套回星级', () => {
+    const lib = sampleLibrary();
+    lib.works[2].rating = 5;
+    const saved = emptySaved();
+    updateSaved(saved, lib);
+    const fresh = sampleLibrary();
+    applyToSample(fresh, saved);
+    expect(fresh.works[2].rating).toBe(5);
+  });
+});
+
 describe('RAW + JPG 合并成一幅（2026-11-18）', () => {
   it('扫描结果里 JPG 带着同名 RAW 的路径：作品上也带着（右键可以把 RAW 另存为）；没配对的作品没有', () => {
     const saved = emptySaved();

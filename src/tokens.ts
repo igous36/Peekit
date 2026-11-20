@@ -306,6 +306,8 @@ export const DARK_SCOPES = [
   '.app.is-fullscreen .ctx-menu',
   '.app.is-fullscreen .about-dialog',
   '.app.is-fullscreen .popover',
+  // 命令面板（2026-11-20）
+  '.app.is-fullscreen .palette',
 ] as const;
 
 /** 一组 CSS 变量声明 */

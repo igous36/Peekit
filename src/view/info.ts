@@ -9,6 +9,8 @@
 // - “完成”旁边加“取消”：没有改动时不可点，有改动时点了放弃修改并关闭
 // - 点卡片外面、按 Esc：放弃这次的修改并关闭（恢复到打开编辑卡之前）；“完成”、回车：保存
 // - 右键系列芯片：弹出删除系列的菜单
+//
+// 2026-11-20：展示态的日期（和源文件名）下面一排 5 颗星，点了打星，再点同一颗清除（stars.ts）
 import type { Series, Work } from '../data/types';
 import { SERIES_NAME_MAX, TITLE_MAX, displayName, displayTitle } from '../data/series-ops';
 import { t } from '../i18n';
@@ -16,6 +18,7 @@ import { r3 } from '../engine/math';
 import { infoSlide } from '../engine/mapping';
 import { el, svgIcon, ICON_CHEVRON_DOWN, ICON_PENCIL, Styled } from './dom';
 import { menuPoint } from './context-menu';
+import { StarRow } from './stars';
 
 /** 系列多于这么多个时收起 */
 export const SERIES_COLLAPSED_MAX = 3;
@@ -51,6 +54,8 @@ export interface InfoFrame {
   frac: number;
   /** 镜头拉远程度 0–1（系列视图）：“向下拖动查看全部”跟着淡出，回到单幅时再出现 */
   zoom: number;
+  /** 信息卡现在能不能点（放大时淡出就不能）：星星跟着决定能不能被 Tab 到 */
+  interactive: boolean;
   /** 不为 null 时显示编辑态 */
   edit: EditFrame | null;
 }
@@ -69,6 +74,8 @@ export interface InfoHandlers {
   seriesMenu?: (seriesId: string, x: number, y: number) => void;
   /** 展示态的系列标签按下（2026-11-18：拖出去就把整个系列拖进情绪板） */
   seriesDrag?: (e: PointerEvent, chip: HTMLElement) => void;
+  /** 点了第 n 颗星（2026-11-20）：再点同一颗是清除，由 App 判断 */
+  rate?: (n: number) => void;
 }
 
 interface Chip {
@@ -119,6 +126,7 @@ export class InfoPanel {
   private source: Styled;
   private count: Styled;
   private dragHint: Styled;
+  private stars: StarRow;
   private viewSeriesId: string | null = null;
 
   private editBlock: HTMLElement;
@@ -161,11 +169,19 @@ export class InfoPanel {
       const p = menuPoint(e, seriesTag);
       this.handlers.seriesMenu?.(this.viewSeriesId, p.x, p.y);
     });
+    // 星级（2026-11-20）：日期下面一排 5 颗小星，点了打星，再点同一颗清除；数字键 1–5 / 0 也行
+    this.stars = new StarRow({
+      label: (n) => t('rating.set', { n }),
+      onPick: (n) => this.handlers.rate?.(n),
+      size: 15,
+      cls: 'info-stars',
+    });
     const slide = el('div', { class: 'info-slide' }, [
       el('div', { class: 'info-head' }, [seriesTag, this.editButton]),
       title,
       date,
       source,
+      this.stars.root,
     ]);
     const count = el('span', { class: 'info-pos' });
     const dragHint = el('span', { 'data-i18n': 'info.dragDown' });
@@ -309,6 +325,8 @@ export class InfoPanel {
     this.source.text(src);
     this.source.attr('title', src);
     this.source.set('display', src ? 'block' : 'none');
+    this.stars.set(w.rating ?? 0);
+    this.stars.setTabbable(f.interactive);
     // 2026-11-18：原来是“同系列 n 幅”，改成“当前在系列里的序号 / 系列总幅数”；完整说法给读屏、悬停时显示
     this.count.text(`${f.index} / ${f.count}`);
     const pos = t('info.seriesPos', { i: f.index, n: f.count });
