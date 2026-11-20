@@ -1,5 +1,6 @@
 // 预览集列表里的几种行（2026-11-18 从 menu.ts 抽出来）：左上角三道杠菜单和字标旁的预览集切换器共用——
-// 原地改名的输入框、原地确认删除、右键菜单的三项（修改名称 / 创建副本 / 删除预览集）。
+// 原地改名的输入框、右键菜单的三项（修改名称 / 创建副本 / 删除预览集）。
+// 删除确认原来也在这里（原地展开一行），2026-11-20 改成屏幕中央的确认框（confirm-dialog.ts）。
 import { t } from '../i18n';
 import { SET_NAME_MAX } from '../data/sets';
 import { el, ICON_COPY, ICON_PENCIL, ICON_TRASH } from './dom';
@@ -36,25 +37,6 @@ export function setRenameRow(s: SetInfo, finish: (commit: boolean, value: string
   });
   input.addEventListener('blur', () => end(true));
   return el('div', { class: 'menu-set menu-set--editing', role: 'none' }, [input]);
-}
-
-/** 原地确认删除：“删除「xxx」？只删除这个预览集……” + 取消 / 删除（取消按钮带 data-cancel，方便调用方放焦点） */
-export function setConfirmRow(
-  s: SetInfo, cancel: () => void, confirm: () => void, texts: { title?: string; hint?: string } = {},
-): HTMLElement {
-  const no = el('button', { type: 'button', class: 'menu-confirm-btn', role: 'menuitem', 'data-cancel': s.id }, [
-    t('sets.cancel'),
-  ]);
-  const ok = el('button', { type: 'button', class: 'menu-confirm-btn menu-confirm-btn--danger', role: 'menuitem' }, [
-    t('sets.confirmDelete'),
-  ]);
-  no.addEventListener('click', cancel);
-  ok.addEventListener('click', confirm);
-  return el('div', { class: 'menu-confirm', role: 'none' }, [
-    el('p', { class: 'menu-confirm-title' }, [texts.title ?? t('sets.deleteConfirm', { name: s.name })]),
-    el('p', { class: 'menu-confirm-hint' }, [texts.hint ?? t('sets.deleteHint')]),
-    el('div', { class: 'menu-confirm-actions', role: 'none' }, [no, ok]),
-  ]);
 }
 
 /** 右键预览集的菜单项：修改名称 / 创建副本 / 删除预览集 */

@@ -38,6 +38,7 @@ import { clampRating, countAtLeast, filterByRating, ratingFromKey, toggleRating,
 import { CHECK_KEYS, CHECK_KINDS, NO_CHECKS, anyCheck, checkFromKey, toggleCheck, type CheckKind, type CheckState } from './engine/checks';
 import { CheckBar, CHECK_ICONS } from './view/check-bar';
 import { Palette } from './view/palette';
+import { ConfirmDialog } from './view/confirm-dialog';
 import type { SearchItem } from './engine/search';
 import { setThemePref } from './theme';
 import { toggleReduceTransparency, transparencyReduced } from './transparency';
@@ -143,6 +144,8 @@ export class App {
   private magClass = false;
   /** 命令面板（2026-11-20，Ctrl+K） */
   private cmdPalette: Palette;
+  /** 删除确认框（2026-11-20） */
+  private confirmDialog: ConfirmDialog;
   /** 筛选时编辑卡的系列芯片按全部作品算（被筛掉的作品所在的系列也要能选） */
   private usedSeries: Set<string> | null = null;
   private usedFor: readonly Work[] | null = null;
@@ -313,8 +316,11 @@ export class App {
       checks: () => this.checks,
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
+      confirm: (opts, run) => this.confirmDialog.open(opts, run),
     });
     this.ctxMenu = new ContextMenu();
+    // 删除预览集 / 情绪板的确认框（2026-11-20，屏幕中央）
+    this.confirmDialog = new ConfirmDialog();
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'F5' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -338,6 +344,7 @@ export class App {
       deleteSet: this.deleteSet,
       duplicateSet: this.duplicateSet,
       contextMenu: (items, x, y, label) => this.ctxMenu.show(items, x, y, label),
+      confirm: (opts, run) => this.confirmDialog.open(opts, run),
     });
     this.hud.setSlot.append(this.switcher.root);
     // 星级筛选开着时，字标那一行多一个“★ 3+ ×”，点了恢复显示全部（2026-11-20）
@@ -475,6 +482,7 @@ export class App {
       this.colorPicker.root,
       this.renamePop.root,
       this.about.root,
+      this.confirmDialog.root,
       this.cmdPalette.root,
       this.hud.live,
     ]);
@@ -608,7 +616,7 @@ export class App {
   }
 
   blockKeys(): boolean {
-    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen;
+    return this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen;
   }
 
   /** 舞台中间那幅卡片在屏幕上的位置 */

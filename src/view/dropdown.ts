@@ -2,8 +2,11 @@
 // 左上角菜单和预览集切换器共用；同一时间只开一个。
 const all = new Set<Dropdown>();
 
-/** 在右键菜单里（右键菜单单独挂在界面最外层，不在下拉面板里） */
-const inCtxMenu = (t: EventTarget | null): boolean => t instanceof Element && !!t.closest('.ctx-menu');
+/**
+ * 在右键菜单或删除确认框里（这两个单独挂在界面最外层，不在下拉面板里）：
+ * 里面的点击、焦点不算“点外面”，菜单不收起（2026-11-20 加确认框：删完菜单列表原地更新）
+ */
+const inCtxMenu = (t: EventTarget | null): boolean => t instanceof Element && !!t.closest('.ctx-menu, .confirm-scrim');
 
 export class Dropdown {
   isOpen = false;

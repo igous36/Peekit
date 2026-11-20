@@ -1,13 +1,15 @@
 // 字标旁边的预览集胶囊（2026-11-17 新增）：显示当前预览集名字，点开是预览集列表（带作品数），
 // 点一个就切换；最下面可以新建。
-// 2026-11-18：右键（或菜单键 / Shift+F10）列表里的预览集：修改名称（原地输入框）/ 创建副本 / 删除预览集（原地确认），
+// 2026-11-18：右键（或菜单键 / Shift+F10）列表里的预览集：修改名称（原地输入框）/ 创建副本 / 删除预览集，
 // 和左上角三道杠菜单里的一样（共用 set-rows.ts）。
+// 2026-11-20：删除改成屏幕中央的确认框（confirm-dialog.ts），和三道杠菜单一致
 import { t } from '../i18n';
 import { el, svgIcon, Styled, ICON_CHECK, ICON_CHEVRON_DOWN, ICON_PLUS } from './dom';
 import { Dropdown } from './dropdown';
 import { menuPoint, type CtxItem } from './context-menu';
-import { setConfirmRow, setContextItems, setRenameRow } from './set-rows';
+import { setContextItems, setRenameRow } from './set-rows';
 import type { SetInfo } from './menu';
+import type { ConfirmOptions } from './confirm-dialog';
 
 export interface SwitcherHandlers {
   sets: () => SetInfo[];
@@ -19,6 +21,8 @@ export interface SwitcherHandlers {
   duplicateSet: (id: string) => string | null;
   /** 弹出右键菜单（全局只有一个，由 app 持有） */
   contextMenu: (items: CtxItem[], x: number, y: number, label: string) => void;
+  /** 屏幕中央的确认框：点了确认才调用 run */
+  confirm: (opts: ConfirmOptions, run: () => void) => void;
 }
 
 export class SetSwitcher {
@@ -27,9 +31,8 @@ export class SetSwitcher {
   private name: Styled;
   private panel: HTMLElement;
   private dropdown: Dropdown;
-  /** 正在原地改名 / 确认删除的预览集 */
+  /** 正在原地改名的预览集 */
   private editing: string | null = null;
-  private confirming: string | null = null;
 
   constructor(private handlers: SwitcherHandlers) {
     const name = el('span', { class: 'set-chip-name' });
@@ -42,7 +45,6 @@ export class SetSwitcher {
     this.root = el('div', { class: 'set-switch' }, [this.chip, this.panel]);
     this.dropdown = new Dropdown(this.root, this.chip, this.panel, () => {
       this.editing = null;
-      this.confirming = null;
       this.rebuild();
     });
   }
@@ -85,22 +87,6 @@ export class SetSwitcher {
         this.dropdown.focusItem((x) => x.dataset.set === s.id);
       });
     }
-    if (this.confirming === s.id) {
-      return setConfirmRow(
-        s,
-        () => {
-          this.confirming = null;
-          this.rebuild();
-          this.dropdown.focusItem((x) => x.dataset.set === s.id);
-        },
-        () => {
-          this.confirming = null;
-          this.handlers.deleteSet(s.id);
-          this.rebuild();
-          this.dropdown.focusItem();
-        },
-      );
-    }
     const b = el('button', {
       type: 'button', class: 'menu-item', role: 'menuitemradio', 'aria-checked': String(s.current), title: s.name,
       'data-set': s.id,
@@ -120,7 +106,6 @@ export class SetSwitcher {
       const items = setContextItems(s, {
         rename: () => {
           this.editing = s.id;
-          this.confirming = null;
           this.rebuild();
           const input = this.panel.querySelector<HTMLInputElement>('.menu-input');
           input?.focus();
@@ -132,10 +117,12 @@ export class SetSwitcher {
           this.dropdown.focusItem((x) => x.dataset.set === id);
         },
         remove: () => {
-          this.confirming = s.id;
-          this.editing = null;
-          this.rebuild();
-          this.dropdown.focusItem((x) => x.dataset.cancel === s.id);
+          this.handlers.confirm({ title: t('sets.deleteConfirm', { name: s.name }) }, () => {
+            this.handlers.deleteSet(s.id);
+            if (!this.isOpen) return;
+            this.rebuild();
+            this.dropdown.focusItem();
+          });
         },
       });
       this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));

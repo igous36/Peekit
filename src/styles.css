@@ -611,50 +611,6 @@ button:focus-visible {
   outline-color: var(--color-text);
 }
 
-/* 删除确认：原地展开，写清楚只删预览集、不删图片 */
-.menu-confirm {
-  margin: 4px 6px;
-  padding: 12px 12px 10px;
-  border-radius: var(--radius-input);
-  background: var(--color-chip);
-}
-
-.menu-confirm-title {
-  margin: 0 0 4px;
-  font: 500 14px/1.4 var(--font-family-sans);
-  overflow-wrap: anywhere;
-}
-
-.menu-confirm-hint {
-  margin: 0 0 10px;
-  font: var(--font-caption);
-  color: var(--color-text-secondary);
-}
-
-.menu-confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.menu-confirm-btn {
-  height: 36px;
-  min-width: 64px;
-  padding: 0 14px;
-  border: 1px solid var(--color-input-border);
-  border-radius: var(--radius-pill);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font: 500 13px/1 var(--font-family-sans);
-  cursor: pointer;
-}
-
-.menu-confirm-btn--danger {
-  border-color: var(--color-text);
-  background: var(--color-text);
-  color: var(--color-surface);
-}
-
 /* 编辑态：系列多时卡片比较高，窗口矮（最小 600px）时在卡片里滚动，不压到底部时间轴
    （206 = 卡片 top 68 + 上下内边距 38 + 时间轴区域 100） */
 .info-editor {
@@ -1744,6 +1700,25 @@ button:focus-visible {
   background: color-mix(in srgb, var(--color-text) 84%, var(--color-surface));
 }
 
+/* ───────────── 删除确认框（2026-11-20，confirm-dialog.ts） ─────────────
+   屏幕中央，和关于对话框同一套遮罩、白卡、按钮；只有一句“删除「xxx」？”和取消 / 删除。
+   删除按钮用墨色实心（不用红色，保持只有一个强调色） */
+.confirm-dialog {
+  width: min(360px, 100%);
+  padding: 24px 22px 20px;
+}
+
+.confirm-title {
+  margin: 0 0 24px;
+  font: 600 16px/1.45 var(--font-family-sans);
+  overflow-wrap: anywhere;
+}
+
+.confirm-btn {
+  min-width: 88px;
+  justify-content: center;
+}
+
 /* ───────────── 浮层卡片：修改名称 / 修改颜色（2026-11-17 新增） ─────────────
    和关于对话框同一套卡片（白卡、24px 圆角、面板阴影），出现在右键的位置，从那一角带一点回弹地弹出来。
    全屏时用深色变量（tokens.ts 的 DARK_SCOPES）。 */
@@ -2200,7 +2175,6 @@ button:focus-visible {
   .menu-item,
   .menu-icon,
   .menu-input,
-  .menu-confirm,
   .info,
   .series-input,
   .editor-done,
@@ -2227,7 +2201,6 @@ button:focus-visible {
   }
 
   .menu-input,
-  .menu-confirm,
   .series-input {
     border-radius: calc(var(--radius-input) * var(--corner-scale));
   }

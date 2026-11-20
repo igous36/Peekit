@@ -4,7 +4,7 @@
 //   导入文件夹到…      ›      → 同上
 //   ───────
 //   预览集
-//   ✓ 我的作品   128   ✎ 🗑   ← 点名字切换；✎ 原地改名；🗑 原地确认删除（只删预览集，不删图片）
+//   ✓ 我的作品   128   ✎ 🗑   ← 点名字切换；✎ 原地改名；🗑 屏幕中央弹出确认框（只删预览集，不删图片）
 //     旅行速写    36   ✎ 🗑
 //   + 新建预览集
 //   ───────
@@ -16,11 +16,11 @@
 //     界面语言              ›  ← 再弹出一级：10 种语言，原来的“语言”两个按钮去掉
 //     ───────
 //     刷新                 F5  ← 重新扫描当前预览集导入过的文件夹 / 文件
-// - 右键预览集：修改名称 / 创建副本 / 删除预览集（改名、删除走原来那套原地输入框和确认）
+// - 右键预览集：修改名称 / 创建副本 / 删除预览集（改名走原地输入框，删除走确认框）
 //
 // 2026-11-18：预览集下面是情绪板，格式和预览集一样：
 //     情绪板
-//     ✓ 灵感   12   ✎ 🗑      ← 点名字打开；✎ 原地改名；🗑 原地确认删除（只删情绪板，不删图片）
+//     ✓ 灵感   12   ✎ 🗑      ← 点名字打开；✎ 原地改名；🗑 屏幕中央弹出确认框（只删情绪板，不删图片）
 //     + 新建情绪板
 //   右键情绪板：修改名称 / 创建副本 / 删除情绪板。两种列表共用 listRow
 //
@@ -28,6 +28,8 @@
 // - 最上面一行“搜索…  Ctrl K”，打开命令面板（palette.ts）
 // - “查看 ›”里加了星级筛选（一行 5 颗星）和画师自检三行（水平翻转 H / 灰度 G / 模糊 B，点了不关菜单）
 // - 偏好设置加“显示 → 降低透明度”（transparency.ts）
+// - 删除预览集 / 情绪板：原来在列表里原地展开一行确认，改成屏幕中央的确认框（confirm-dialog.ts），
+//   只问“删除「xxx」？”，不再写“图片文件不会被删除”；菜单留在确认框后面，删完列表原地更新
 //
 // 面板内容在每次打开 / 切换视图 / 改名删除后重建（用户操作时，不在每帧）。
 // 进出二级视图时有过渡（2026-11-17 新增）：旧内容滑出淡出、新内容从另一侧滑入，面板高度跟着过渡。
@@ -45,7 +47,8 @@ import { Dropdown } from './dropdown';
 import { Flyout } from './flyout';
 import { ThemeSwitch } from './theme-switch';
 import { menuPoint, type CtxItem } from './context-menu';
-import { setConfirmRow, setContextItems, setRenameRow } from './set-rows';
+import { setContextItems, setRenameRow } from './set-rows';
+import type { ConfirmOptions } from './confirm-dialog';
 import { StarRow } from './stars';
 import { CHECK_KEYS, CHECK_KINDS, type CheckKind } from '../engine/checks';
 import { toggleRating } from '../engine/rating';
@@ -112,6 +115,8 @@ export interface MenuHandlers {
   toggleCheck: (k: CheckKind) => void;
   /** 打开命令面板（Ctrl+K，2026-11-20） */
   openPalette: () => void;
+  /** 屏幕中央的确认框（2026-11-20，删除预览集 / 情绪板）：点了确认才调用 run */
+  confirm: (opts: ConfirmOptions, run: () => void) => void;
 }
 
 export class AppMenu {
@@ -120,7 +125,6 @@ export class AppMenu {
   private dropdown: Dropdown;
   private view: MenuView = 'main';
   private editing: string | null = null;
-  private confirming: string | null = null;
   private viewFly: Flyout;
   private langFly: Flyout;
   private themeSwitch: ThemeSwitch;
@@ -150,7 +154,6 @@ export class AppMenu {
     this.dropdown = new Dropdown(this.root, button, this.panel, () => {
       this.view = 'main';
       this.editing = null;
-      this.confirming = null;
       this.viewFly.close();
       this.rebuild();
     });
@@ -206,7 +209,6 @@ export class AppMenu {
     this.slide(view === 'main' ? -1 : 1, () => {
       this.view = view;
       this.editing = null;
-      this.confirming = null;
       this.rebuild();
     });
     this.dropdown.focusItem(focus);
@@ -331,7 +333,7 @@ export class AppMenu {
     this.button.title = t(key);
     const row = this.panel.querySelector<HTMLElement>('[data-update]');
     if (row && has) this.paintUpdateRow(row);
-    else if (had !== has && this.isOpen && this.view === 'main' && !this.editing && !this.confirming) this.rebuild();
+    else if (had !== has && this.isOpen && this.view === 'main' && !this.editing) this.rebuild();
   }
 
   private updateRow(): HTMLElement | null {
@@ -472,7 +474,7 @@ export class AppMenu {
         this.rebuild();
         this.dropdown.focusItem((x) => x.dataset.set === id);
       },
-      remove: () => this.beginDelete(s.id),
+      remove: () => this.beginDelete(s, ops),
     }, ops === this.boardOps ? t('board.delete') : undefined);
     this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));
   }
@@ -480,22 +482,27 @@ export class AppMenu {
   /** 原地改名（输入框） */
   private beginRename(id: string): void {
     this.editing = id;
-    this.confirming = null;
     this.rebuild();
     const input = this.panel.querySelector<HTMLInputElement>('.menu-input');
     input?.focus();
     input?.select();
   }
 
-  /** 原地确认删除 */
-  private beginDelete(id: string): void {
-    this.confirming = id;
-    this.editing = null;
-    this.rebuild();
-    this.dropdown.focusItem((x) => x.dataset.cancel === id);
+  /**
+   * 删除（2026-11-20 改）：屏幕中央弹出确认框“删除「xxx」？”，菜单留在后面。
+   * 取消：焦点回到原来那个 🗑；删除：列表原地更新，焦点放到第一项
+   */
+  private beginDelete(s: SetInfo, ops: ListOps): void {
+    const title = t(ops === this.boardOps ? 'board.deleteConfirm' : 'sets.deleteConfirm', { name: s.name });
+    this.handlers.confirm({ title }, () => {
+      ops.remove(s.id);
+      if (!this.isOpen) return;
+      this.rebuild();
+      this.dropdown.focusItem();
+    });
   }
 
-  /** 列表里的一行：预览集和情绪板共用（点名字打开 / 切换，✎ 原地改名，🗑 原地确认删除，右键菜单） */
+  /** 列表里的一行：预览集和情绪板共用（点名字打开 / 切换，✎ 原地改名，🗑 弹出确认框，右键菜单） */
   private listRow(s: SetInfo, ops: ListOps): HTMLElement {
     if (this.editing === s.id) {
       return setRenameRow(s, (commit, value) => {
@@ -504,23 +511,6 @@ export class AppMenu {
         this.rebuild();
         this.dropdown.focusItem((x) => x.dataset.rename === s.id);
       });
-    }
-    if (this.confirming === s.id) {
-      return setConfirmRow(
-        s,
-        () => {
-          this.confirming = null;
-          this.rebuild();
-          this.dropdown.focusItem((x) => x.dataset.delete === s.id);
-        },
-        () => {
-          this.confirming = null;
-          ops.remove(s.id);
-          this.rebuild();
-          this.dropdown.focusItem();
-        },
-        ops === this.boardOps ? { title: t('board.deleteConfirm', { name: s.name }), hint: t('board.deleteHint') } : {},
-      );
     }
     const main = el('button', {
       type: 'button',
@@ -547,7 +537,7 @@ export class AppMenu {
       type: 'button', class: 'menu-icon', role: 'menuitem', 'aria-label': t('sets.delete', { name: s.name }),
       title: t('sets.delete', { name: s.name }), 'data-delete': s.id,
     }, [svgIcon(ICON_TRASH, 15)]);
-    del.addEventListener('click', () => this.beginDelete(s.id));
+    del.addEventListener('click', () => this.beginDelete(s, ops));
     const row = el('div', { class: 'menu-set', role: 'none' }, [main, rename, del]);
     // 右键（或菜单键 / Shift+F10）整行都可以
     row.addEventListener('contextmenu', (e) => this.listMenu(s, ops, e, main));
