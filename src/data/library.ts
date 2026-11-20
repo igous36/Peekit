@@ -11,6 +11,7 @@ import { nextSeriesColor, newSeriesId, SERIES_NAME_MAX, UNSORTED_ID } from './se
 import { t } from '../i18n';
 import { UNASSIGNED_COLOR, color } from '../tokens';
 import { clampRating } from '../engine/rating';
+import { packSwatches, unpackSwatches } from '../engine/swatches';
 
 export const SAVE_VERSION = 2;
 export { UNSORTED_ID };
@@ -39,6 +40,8 @@ export interface SavedWork {
   removed?: boolean;
   /** 星级 1–5（2026-11-20，字段可选，格式版本不变） */
   rating?: number;
+  /** 主色组成（2026-11-20）：[[#RRGGBB, 占比], …]；文件改过（修改时间或大小变了）就作废重算 */
+  swatches?: [string, number][];
 }
 
 export interface SavedLibrary {
@@ -206,8 +209,12 @@ export function mergeScan(
       ids = seriesIds();
     }
 
+    // 文件改过：以前算的主色组成作废
+    const changed = !!prev && (prev.mtime !== it.mtime || prev.size !== it.size);
+    const swatches = changed ? undefined : unpackSwatches(prev?.swatches);
     saved.works[it.path] = {
       ...prev,
+      swatches: swatches ? packSwatches(swatches) : undefined,
       series: sid,
       mtime: it.mtime,
       size: it.size,
@@ -231,6 +238,7 @@ export function mergeScan(
     if (prev?.customTitle) w.customTitle = prev.customTitle;
     const rating = clampRating(prev?.rating);
     if (rating) w.rating = rating;
+    if (swatches) w.swatches = swatches;
     // RAW + JPG 合并成一幅时，同名 RAW 原片的路径（每次扫描都重新配对，不存盘）
     if (it.raw) w.raw = it.raw;
     works.push(w);
@@ -265,6 +273,7 @@ export function updateSaved(saved: SavedLibrary, lib: Library): void {
     const rating = clampRating(w.rating);
     if (rating) next.rating = rating;
     else delete next.rating;
+    if (w.swatches?.length) next.swatches = packSwatches(w.swatches);
     if (w.path && w.bg !== color['color-chip']) next.color = w.bg;
     saved.works[w.id] = next;
   }

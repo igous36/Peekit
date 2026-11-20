@@ -9,6 +9,8 @@
 // - 黄色指示条可以直接拖动（也是一个滑块，可用 ← → Home End PageUp PageDown 调）
 // - 每个月的第一幅上方标月份（每年第一幅仍标年份），挤的时候月份自动让位
 // - 前后箭头：左键移动一幅，右键移动到上 / 下一个月
+//
+// 2026-11-20：鼠标在胶囊上停一会儿，上方浮出每幅主色连成的色条（barcode.ts），点色条跳到那一幅
 import type { Work } from '../data/types';
 import { displayTitle } from '../data/series-ops';
 import { lang, t } from '../i18n';
@@ -19,6 +21,8 @@ import {
   bucketOf, bucketStart, tickCount, tickPosition, waveHeight, waveLift, waveSigma, waveStrength, WAVE_WAKE,
 } from '../engine/ticks';
 import { el, svgIcon, ICON_PREV, ICON_NEXT, Styled } from './dom';
+import { ColorStrip } from './barcode';
+import { color } from '../tokens';
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -83,6 +87,7 @@ export class Timeline {
   private last: TimelineFrame | null = null;
 
   private scrub: { id: number; offset: number } | null = null;
+  private strip: ColorStrip;
 
   constructor(public handlers: TimelineHandlers = {}) {
     const prev = el('button', {
@@ -120,6 +125,14 @@ export class Timeline {
     this.track = el('div', { class: 'tl-track' }, [el('div', { class: 'tl-line' }), this.labelLayer, this.tickLayer, barPos]);
     this.root = el('nav', { class: 'timeline', 'data-i18n-aria': 'timeline.aria' }, [prev, this.track, next]);
     this.nextButton = next;
+    // 色条（2026-11-20）：悬停一会儿浮在胶囊上方，每幅的主色连成一条；还没有主色（缩略图没到）的作品用芯片灰
+    this.strip = new ColorStrip(
+      this.root,
+      this.track,
+      (w) => (w.bg && w.bg !== color['color-chip'] ? w.bg : (w.swatches?.[0]?.hex ?? null)),
+      (i) => this.handlers.go?.(i),
+    );
+    this.root.append(this.strip.root);
 
     bar.addEventListener('pointerdown', this.onBarDown);
     bar.addEventListener('pointermove', this.onBarMove);
@@ -130,6 +143,7 @@ export class Timeline {
     new ResizeObserver(() => {
       this.trackW = this.track.clientWidth;
       this.layoutLabels();
+      this.strip.resize();
       if (this.builtFor && tickCount(this.n, this.track.clientWidth) !== this.m) {
         this.builtFor = null;
         if (this.last) this.render(this.last);
@@ -348,6 +362,7 @@ export class Timeline {
     // 宽度只在速度变化时以整数 px 变化，影响范围只有这一个绝对定位元素
     this.indBar.set('width', `${ind.width}px`);
     this.renderWave(ind.left, f.vel, works.length);
+    this.strip.update(works, f.pos);
     // 滑块的读屏值（Styled 有缓存，值没变就不写 DOM）
     const w = works[cur];
     this.indBar.attr('aria-valuenow', String(cur + 1));

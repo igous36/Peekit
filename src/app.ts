@@ -14,7 +14,7 @@ import { cameraLevel, stageUnit } from './engine/gesture';
 import { clamp } from './engine/math';
 import { Controller, type UiFlags } from './controller';
 import { UNASSIGNED_COLOR } from './tokens';
-import { applyI18n, onLangChange, t } from './i18n';
+import { applyI18n, lang, onLangChange, t } from './i18n';
 import { el, Styled } from './view/dom';
 import { StageView } from './view/stage';
 import { Hud } from './view/hud';
@@ -34,9 +34,15 @@ import { onPrefsChange, prefs } from './prefs';
 import {
   svgIcon, ICON_CLOSE, ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
 } from './view/dom';
-import { clampRating, countAtLeast, filterByRating, ratingFromKey, toggleRating, viewIndexOf } from './engine/rating';
+import { clampRating, filterByRating, passes, ratingFromKey, toggleRating, viewIndexOf } from './engine/rating';
 import { CHECK_KEYS, CHECK_KINDS, NO_CHECKS, anyCheck, checkFromKey, toggleCheck, type CheckKind, type CheckState } from './engine/checks';
 import { CheckBar, CHECK_ICONS } from './view/check-bar';
+import {
+  COLOR_FAMILIES, matchesColor, sameColorFilter, swatchesFromShapes, swatchesOf, type ColorFilter, type Swatch,
+} from './engine/swatches';
+import { normalizeHex } from './engine/color';
+import { ColorIndex } from './data/color-index';
+import { sampleImage, sampleSvg } from './data/palette-loader';
 import { Palette } from './view/palette';
 import { ConfirmDialog } from './view/confirm-dialog';
 import type { SearchItem } from './engine/search';
@@ -136,6 +142,15 @@ export class App {
   private ratingMin = 0;
   private filterChip: HTMLButtonElement;
   private filterChipText: HTMLElement;
+  /** 按颜色筛选（2026-11-20）：一个色系或任意颜色；也只在这次运行里有效 */
+  private colorFilter: ColorFilter | null = null;
+  private colorToken = 0;
+  private colorIndex: ColorIndex;
+  private colorChip: HTMLButtonElement;
+  private colorChipDot: HTMLElement;
+  private colorChipText: HTMLElement;
+  /** “任意颜色”用的系统取色框（藏起来的 <input type="color">） */
+  private colorInput: HTMLInputElement;
   /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊，只在这次运行里有效 */
   private checks: CheckState = { ...NO_CHECKS };
   private checkBar: CheckBar;
@@ -271,7 +286,18 @@ export class App {
         if (w) this.openSeriesMenu(w.series, x, y);
       },
     });
-    this.palette = new PaletteLoader((colors) => this.hud.counter.setPalette(colors));
+    this.palette = new PaletteLoader(
+      (colors) => this.hud.counter.setPalette(colors),
+      // 取主题色抓到了像素：还没算过主色组成的顺手算掉（按颜色筛选用，2026-11-20）
+      (w, px) => {
+        if (w.swatches || !w.path) return;
+        const s = swatchesOf(px);
+        if (!s.length) return;
+        w.swatches = s;
+        this.persistSoon();
+      },
+    );
+    this.colorIndex = new ColorIndex((w) => this.analyzeColors(w));
     this.info = new InfoPanel({
       startEdit: this.startEdit,
       retitle: this.retitle,
@@ -313,6 +339,9 @@ export class App {
       duplicateBoard: this.duplicateBoard,
       ratingFilter: () => this.ratingMin,
       setRatingFilter: (n) => this.setRatingFilter(n),
+      colorFilter: () => this.colorFilter,
+      setColorFilter: (f) => void this.setColorFilter(f),
+      pickColor: () => this.pickFilterColor(),
       checks: () => this.checks,
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
@@ -355,7 +384,21 @@ export class App {
       el('span', { class: 'status-chip-x' }, [svgIcon(ICON_CLOSE, 12)]),
     ]);
     this.filterChip.addEventListener('click', () => this.setRatingFilter(0));
-    this.hud.statusSlot.append(this.filterChip);
+    // 按颜色筛选的状态标签（2026-11-20）：“● 蓝 ×”
+    this.colorChipDot = el('span', { class: 'status-chip-dot' });
+    this.colorChipText = el('span', { class: 'status-chip-text status-chip-text--sans' });
+    this.colorChip = el('button', { type: 'button', class: 'status-chip', hidden: true }, [
+      this.colorChipDot,
+      this.colorChipText,
+      el('span', { class: 'status-chip-x' }, [svgIcon(ICON_CLOSE, 12)]),
+    ]);
+    this.colorChip.addEventListener('click', () => void this.setColorFilter(null));
+    this.hud.statusSlot.append(this.filterChip, this.colorChip);
+    this.colorInput = el('input', { type: 'color', class: 'color-input', tabindex: -1, 'aria-hidden': 'true' });
+    this.colorInput.addEventListener('change', () => {
+      const hex = normalizeHex(this.colorInput.value);
+      if (hex) void this.setColorFilter({ kind: 'hex', hex });
+    });
     // 命令面板（2026-11-20）：Ctrl+K 在哪都能打开（情绪板里也行）；拖起阵列开着时不行
     this.cmdPalette = new Palette();
     document.addEventListener('keydown', (e) => {
@@ -484,6 +527,7 @@ export class App {
       this.about.root,
       this.confirmDialog.root,
       this.cmdPalette.root,
+      this.colorInput,
       this.hud.live,
     ]);
     mount.replaceChildren(this.root);
@@ -1028,24 +1072,44 @@ export class App {
     this.full = lib;
     this.loading = false;
     if (lib.works.length) this.service.noteCount(lib.works.length);
-    // 按星筛选开着，但换来的作品里一幅够格的都没有（换了预览集）：自动显示全部
-    if (this.ratingMin > 0 && lib.works.length && !countAtLeast(lib.works, this.ratingMin)) {
-      this.toast.show(t('rating.noneShowAll', { n: this.ratingMin }));
+    // 作品库换了：还没补完的主色分析作废
+    this.colorIndex.cancel();
+    // 筛选开着，但换来的作品里一幅够格的都没有（换了预览集）：自动显示全部
+    if (this.filtering && lib.works.length && !this.countMatches(lib.works, this.ratingMin, this.colorFilter)) {
+      this.toast.show(t('filter.noneShowAll'));
       this.ratingMin = 0;
+      this.colorFilter = null;
       this.updateFilterChip();
     }
     this.lib = this.viewOf(lib);
     this.showView(viewIndexOf(lib.works, this.lib.works, focus), keepCamera);
   }
 
+  /** 星级或颜色筛选开着 */
+  private get filtering(): boolean {
+    return this.ratingMin > 0 || !!this.colorFilter;
+  }
+
+  /** 这幅过不过筛选（星级、颜色两个条件都要满足） */
+  private passesFilter(w: Work, min: number, color: ColorFilter | null): boolean {
+    return passes(w, min) && (!color || matchesColor(w.swatches, color));
+  }
+
+  private countMatches(works: readonly Work[], min: number, color: ColorFilter | null): number {
+    let n = 0;
+    for (const w of works) if (this.passesFilter(w, min, color)) n++;
+    return n;
+  }
+
   /**
-   * 按星筛选（2026-11-20）：从全部作品得出屏幕上显示的作品。不筛选时就是 full 本身；
+   * 按星 / 按颜色筛选（2026-11-20）：从全部作品得出屏幕上显示的作品。不筛选时就是 full 本身；
    * 筛选时作品是子集，系列列表转到 full 上（改名、新建、删除系列都落在 full 上）
    */
   private viewOf(full: Library): Library {
-    if (this.ratingMin <= 0) return full;
+    if (!this.filtering) return full;
+    const min = this.ratingMin, color = this.colorFilter;
     return {
-      works: filterByRating(full.works, this.ratingMin),
+      works: min > 0 && !color ? filterByRating(full.works, min) : full.works.filter((w) => this.passesFilter(w, min, color)),
       get series() {
         return full.series;
       },
@@ -1110,9 +1174,10 @@ export class App {
       const keep = switching ? undefined : this.lib.works[this.controller.targetIndex()]?.id;
       const r = await this.service.import(sources, targetSetId);
       if (token !== this.loadToken) return;
-      // 新导入的作品还没打星：按星筛选开着的话先关掉，不然导入了却看不到
-      if (this.ratingMin > 0) {
+      // 新导入的作品还没打星、没分析过颜色：筛选开着的话先关掉，不然导入了却看不到
+      if (this.filtering) {
         this.ratingMin = 0;
+        this.colorFilter = null;
         this.updateFilterChip();
       }
       const added = new Set(r.added);
@@ -1599,34 +1664,114 @@ export class App {
     this.controller.kick();
   }
 
-  /** 只看 min 星以上（0 = 显示全部）。一幅够格的都没有就不切换，提示一下 */
+  /** 只看 min 星以上（0 = 不按星筛）。一幅够格的都没有就不切换，提示一下 */
   setRatingFilter(min: number): void {
     const m = clampRating(min);
     if (m === this.ratingMin) return;
-    if (m > 0 && !countAtLeast(this.full.works, m)) {
-      this.toast.show(t('rating.none', { n: m }));
+    if (m > 0 && !this.countMatches(this.full.works, m, this.colorFilter)) {
+      this.toast.show(this.colorFilter ? t('filter.none') : t('rating.none', { n: m }));
       return;
     }
+    this.refilter(() => (this.ratingMin = m));
+    this.toast.show(m ? t('rating.filtered', { n: m, count: this.lib.works.length }) : t('rating.showAll'));
+  }
+
+  /**
+   * 按颜色筛选（2026-11-20）：一个色系或任意颜色，null = 不按颜色筛。
+   * 还有作品没分析过主色时先补算（底部提示条显示进度），算完再筛；一幅够格的都没有就不切换
+   */
+  async setColorFilter(f: ColorFilter | null): Promise<void> {
+    if (sameColorFilter(f, this.colorFilter)) return;
+    const token = ++this.colorToken;
+    if (!f) {
+      this.colorIndex.cancel();
+      this.refilter(() => (this.colorFilter = null));
+      this.toast.show(t('color.showAll'));
+      return;
+    }
+    if (this.colorIndex.missing(this.full.works).length) {
+      const ok = await this.colorIndex.fill(this.full.works, (done, total) => {
+        if (token === this.colorToken) this.toast.show(t('color.analyzing', { done, total }), true);
+      });
+      this.persistSoon();
+      if (!ok || token !== this.colorToken) return;
+    }
+    const name = this.colorName(f);
+    if (!this.countMatches(this.full.works, this.ratingMin, f)) {
+      this.toast.show(this.ratingMin ? t('filter.none') : t('color.none', { name }));
+      return;
+    }
+    this.refilter(() => (this.colorFilter = f));
+    this.toast.show(t('color.filtered', { name, count: this.lib.works.length }));
+  }
+
+  /** 菜单里的“任意颜色”：弹系统的取色框（带吸管），选好按这个颜色筛 */
+  private pickFilterColor(): void {
+    const input = this.colorInput;
+    input.value = this.colorFilter?.kind === 'hex' ? this.colorFilter.hex.toLowerCase() : '#3e7bd6';
+    try {
+      input.showPicker();
+    } catch {
+      input.click();
+    }
+  }
+
+  /** 色系的名字，或者色值；中日文句子里色值两边加空格（“带 #3E7BD6 的作品”） */
+  private colorName(f: ColorFilter, inSentence = true): string {
+    if (f.kind === 'family') return t(`colorf.${f.family}`);
+    const hex = f.hex.toUpperCase();
+    return inSentence && ['zh', 'zh-TW', 'ja'].includes(lang()) ? ` ${hex} ` : hex;
+  }
+
+  /** 换了筛选条件：停在原来那一幅（它被筛掉了就停在后面最近的一幅），镜头档位不变 */
+  private refilter(change: () => void): void {
     if (this.ui.editing) this.finishEdit();
-    // 停在原来那一幅；它被筛掉了就停在它后面最近的一幅
     const keep = this.target();
-    this.ratingMin = m;
+    change();
     this.lib = this.viewOf(this.full);
     const at = keep ? this.full.works.indexOf(keep) : 0;
     this.showView(viewIndexOf(this.full.works, this.lib.works, at), true);
     this.updateFilterChip();
-    this.toast.show(m ? t('rating.filtered', { n: m, count: this.lib.works.length }) : t('rating.showAll'));
     this.menu.refresh();
   }
 
   private updateFilterChip(): void {
     const on = this.ratingMin > 0;
     this.filterChip.hidden = !on;
-    if (!on) return;
-    this.filterChipText.textContent = `${this.ratingMin}+`;
-    const label = t('rating.clearFilter', { n: this.ratingMin });
-    this.filterChip.setAttribute('aria-label', label);
-    this.filterChip.title = label;
+    if (on) {
+      this.filterChipText.textContent = `${this.ratingMin}+`;
+      const label = t('rating.clearFilter', { n: this.ratingMin });
+      this.filterChip.setAttribute('aria-label', label);
+      this.filterChip.title = label;
+    }
+    const c = this.colorFilter;
+    this.colorChip.hidden = !c;
+    if (c) {
+      const name = this.colorName(c);
+      this.colorChipDot.style.background = c.kind === 'family' ? COLOR_FAMILIES.find((x) => x.key === c.family)!.hex : c.hex;
+      this.colorChipText.textContent = this.colorName(c, false);
+      const label = t('color.clearFilter', { name });
+      this.colorChip.setAttribute('aria-label', label);
+      this.colorChip.title = label;
+    }
+  }
+
+  /** 算一幅的主色组成（补算用）：示例数据按色块算；桌面版没有缩略图的先生成 */
+  private async analyzeColors(w: Work): Promise<Swatch[] | null> {
+    if (!w.path) return w.shapes ? swatchesFromShapes(w.shapes, w.bg) : null;
+    if (w.broken) return null;
+    const svg = imageKind(w.path) === 'svg';
+    let url = w.thumb;
+    if (!url) {
+      const { mtime, size } = this.service.fileInfo(w.id);
+      const r = await makeThumbnail(w.path, mtime, size);
+      url = assetUrl(r.path);
+      // 顺手把缩略图和主色记上，舞台上不用再生成一次
+      w.thumb = url;
+      if (r.color) w.bg = r.color;
+    }
+    const px = svg ? await sampleSvg(url, 32) : await sampleImage(url, 32);
+    return swatchesOf(px);
   }
 
   // ───────────── 命令面板（2026-11-20，Ctrl+K） ─────────────
@@ -1659,13 +1804,19 @@ export class App {
     if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
   }
 
-  /** 跳到某一幅（被星级筛选藏起来了就先显示全部） */
+  /** 跳到某一幅（被星级 / 颜色筛选藏起来了就先显示全部） */
   private goToWork(w: Work, seriesView = false): void {
     this.paletteGo(() => {
       if (this.ui.editing) this.finishEdit();
       let i = this.lib.works.indexOf(w);
-      if (i < 0 && this.ratingMin > 0) {
-        this.setRatingFilter(0);
+      if (i < 0 && this.filtering) {
+        this.colorIndex.cancel();
+        this.colorToken++;
+        this.refilter(() => {
+          this.ratingMin = 0;
+          this.colorFilter = null;
+        });
+        this.toast.show(t('filter.showAll'));
         i = this.lib.works.indexOf(w);
       }
       if (i < 0) return;
@@ -1723,6 +1874,15 @@ export class App {
       if (n === this.ratingMin) continue;
       add(act(t('rating.filterAtLeast', { n }), () => this.setRatingFilter(n), { keywords: `rating star filter ${'★'.repeat(n)}` }), n === 3 && this.ratingMin === 0);
     }
+    // 按颜色筛选（2026-11-20）：11 个色系、任意颜色、清除
+    if (this.colorFilter) add(act(t('color.showAll'), () => void this.setColorFilter(null), { keywords: 'color colour filter' }), true);
+    for (const f of COLOR_FAMILIES) {
+      const name = t(`colorf.${f.key}`);
+      add(act(t('color.filterFamily', { name }), () => void this.setColorFilter({ kind: 'family', family: f.key }), {
+        keywords: `color colour ${f.key} ${t(`colorf.${f.key}`, undefined, 'en')}`,
+      }));
+    }
+    add(act(t('color.pickAny'), () => this.pickFilterColor(), { keywords: 'color colour picker eyedropper hex' }));
     if (has) {
       for (const k of CHECK_KINDS) {
         add(act(t(`check.${k}`), () => this.toggleCheck(k), {

@@ -42,20 +42,23 @@ export async function sampleSvg(url: string, size = SVG_SIZE): Promise<Uint8Clam
   }
 }
 
-async function sample(url: string): Promise<Uint8ClampedArray> {
+/** 位图图片（缩略图）缩到 size × size 的像素；按颜色筛选（data/color-index.ts）也用 */
+export async function sampleImage(url: string, size = SIZE): Promise<Uint8ClampedArray> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const bmp = await createImageBitmap(await res.blob(), { resizeWidth: SIZE, resizeHeight: SIZE, resizeQuality: 'low' });
+  const bmp = await createImageBitmap(await res.blob(), { resizeWidth: size, resizeHeight: size, resizeQuality: 'low' });
   try {
-    const canvas = new OffscreenCanvas(SIZE, SIZE);
+    const canvas = new OffscreenCanvas(size, size);
     const g = canvas.getContext('2d');
     if (!g) throw new Error('no 2d context');
     g.drawImage(bmp, 0, 0);
-    return g.getImageData(0, 0, SIZE, SIZE).data;
+    return g.getImageData(0, 0, size, size).data;
   } finally {
     bmp.close();
   }
 }
+
+const sample = (url: string) => sampleImage(url);
 
 export class PaletteLoader {
   private cache = new Map<string, string[]>();
@@ -64,8 +67,14 @@ export class PaletteLoader {
   private settled = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
-  /** fast：正在翻动，颜色过渡要短（跟着快速流动） */
-  constructor(private onPalette: (colors: string[], fast: boolean) => void) {}
+  /**
+   * fast：正在翻动，颜色过渡要短（跟着快速流动）。
+   * onPixels（2026-11-20）：抓到一幅的像素时顺便交出去，还没算过主色组成的作品顺手算掉（按颜色筛选用）
+   */
+  constructor(
+    private onPalette: (colors: string[], fast: boolean) => void,
+    private onPixels?: (w: Work, px: Uint8ClampedArray) => void,
+  ) {}
 
   /**
    * 每帧调用（同一幅、状态没变直接返回）。moving = 正在左右翻动（2026-11-18 起）：
@@ -101,7 +110,10 @@ export class PaletteLoader {
     const svg = imageKind(w.path!) === 'svg';
     this.timer = setTimeout(() => {
       void (svg ? sampleSvg(url) : sample(url))
-        .then((px) => pickPalette(px, 3))
+        .then((px) => {
+          this.onPixels?.(w, px);
+          return pickPalette(px, 3);
+        })
         .catch(() => fallbackPalette(w))
         .then((colors) => {
           this.store(w.id, colors);

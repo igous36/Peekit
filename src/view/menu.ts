@@ -26,7 +26,8 @@
 //
 // 2026-11-20：
 // - 最上面一行“搜索…  Ctrl K”，打开命令面板（palette.ts）
-// - “查看 ›”里加了星级筛选（一行 5 颗星）和画师自检三行（水平翻转 H / 灰度 G / 模糊 B，点了不关菜单）
+// - “查看 ›”里加了星级筛选（一行 5 颗星）、颜色筛选（11 个色块 + 任意颜色）
+//   和画师自检三行（水平翻转 H / 灰度 G / 模糊 B，点了不关菜单）
 // - 偏好设置加“显示 → 降低透明度”（transparency.ts）
 // - 删除预览集 / 情绪板：原来在列表里原地展开一行确认，改成屏幕中央的确认框（confirm-dialog.ts），
 //   只问“删除「xxx」？”，不再写“图片文件不会被删除”；菜单留在确认框后面，删完列表原地更新
@@ -52,6 +53,7 @@ import type { ConfirmOptions } from './confirm-dialog';
 import { StarRow } from './stars';
 import { CHECK_KEYS, CHECK_KINDS, type CheckKind } from '../engine/checks';
 import { toggleRating } from '../engine/rating';
+import { COLOR_FAMILIES, type ColorFilter } from '../engine/swatches';
 
 const ICON_MENU = ['M4 7h16', 'M4 12h16', 'M4 17h16'];
 
@@ -110,6 +112,10 @@ export interface MenuHandlers {
   /** 星级筛选（2026-11-20）：现在只看几星以上（0 = 全部），以及改筛选线 */
   ratingFilter: () => number;
   setRatingFilter: (n: number) => void;
+  /** 按颜色筛选（2026-11-20）：现在的颜色条件、改条件（null = 不按颜色）、弹系统取色框挑任意颜色 */
+  colorFilter: () => ColorFilter | null;
+  setColorFilter: (f: ColorFilter | null) => void;
+  pickColor: () => void;
   /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊现在开没开，切换一项 */
   checks: () => Readonly<Record<CheckKind, boolean>>;
   toggleCheck: (k: CheckKind) => void;
@@ -413,7 +419,38 @@ export class AppMenu {
       b.dataset.check = k;
       return b;
     });
-    return [scheme, language, this.divider(), filter, ...checks, this.divider(), refresh];
+    return [scheme, language, this.divider(), filter, this.colorRow(), ...checks, this.divider(), refresh];
+  }
+
+  /**
+   * 颜色筛选（2026-11-20）：一行文字，下面 11 个色块（红橙黄绿青蓝紫粉 + 黑白灰）和一个“任意颜色”。
+   * 点色块 = 只看有这个颜色的作品，再点同一个 = 不按颜色筛；点“任意颜色”弹系统取色框（带吸管）
+   */
+  private colorRow(): HTMLElement {
+    const cur = this.handlers.colorFilter();
+    const swatch = (label: string, on: boolean, fill: string, act: () => void, cls = '') => {
+      const b = el('button', {
+        type: 'button', class: `color-dot ${cls}`.trim(), role: 'menuitemradio', 'aria-checked': String(on),
+        'aria-label': label, title: label,
+      }, [el('span', { class: 'color-dot-fill' })]);
+      (b.firstElementChild as HTMLElement).style.background = fill;
+      b.addEventListener('click', act);
+      return b;
+    };
+    const dots = COLOR_FAMILIES.map((f) => {
+      const on = cur?.kind === 'family' && cur.family === f.key;
+      return swatch(t(`colorf.${f.key}`), on, f.hex, () => {
+        this.handlers.setColorFilter(on ? null : { kind: 'family', family: f.key });
+      });
+    });
+    const custom = cur?.kind === 'hex' ? cur.hex : null;
+    dots.push(swatch(custom ? `${t('color.pickAny')} ${custom}` : t('color.pickAny'), !!custom,
+      custom ?? 'conic-gradient(from 90deg, #E85A4F, #EBC53A, #5BAA55, #3FB2B8, #3E7BD6, #8B5FD0, #E275AE, #E85A4F)',
+      () => this.handlers.pickColor(), 'color-dot--any'));
+    return el('div', { class: 'menu-colors', role: 'none' }, [
+      el('span', { class: 'menu-label menu-colors-label', 'aria-hidden': 'true' }, [t('color.filterMenu')]),
+      el('div', { class: 'menu-colors-grid', role: 'group', 'aria-label': t('color.filterMenu') }, dots),
+    ]);
   }
 
   /** 界面语言：本族语名字 + 当前界面语言里的名字（灰色），当前语言打勾 */

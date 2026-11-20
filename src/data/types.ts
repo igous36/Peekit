@@ -46,6 +46,8 @@ export interface Work {
   broken?: boolean;
   /** 星级 1–5（2026-11-20）；没打星就没有这个字段 */
   rating?: number;
+  /** 主色组成（2026-11-20，按颜色筛选用，engine/swatches.ts）；还没分析过就没有 */
+  swatches?: { hex: string; share: number }[];
 }
 
 export interface Library {
