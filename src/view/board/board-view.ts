@@ -29,7 +29,7 @@
 // 动效：镜头是临界阻尼弹簧；照片的位置、大小各有弹簧（吸附时用更硬的磁吸弹簧），整理时按阅读顺序错开 12ms 依次滑到新位置；
 // 拿起的照片放大一点、阴影变深、按速度轻轻倾斜；打开情绪板时照片按离屏幕中心的距离依次浮现。
 import { t } from '../../i18n';
-import { el, svgIcon, Styled, ICON_COPY, ICON_FOLDER, ICON_PENCIL, ICON_PLUS, ICON_PREV, ICON_TRASH } from '../dom';
+import { el, svgIcon, Styled, ICON_COPY, ICON_FOLDER, ICON_PENCIL, ICON_PIN, ICON_PLUS, ICON_PREV, ICON_TRASH } from '../dom';
 import type { CtxItem } from '../context-menu';
 import { menuPoint } from '../context-menu';
 import { scalar, stepScalar, type Scalar, type Spring } from '../../engine/springs';
@@ -76,6 +76,8 @@ export interface BoardViewHost {
   rename(x: number, y: number): void;
   /** 示例数据的占位图（浏览器调试） */
   paintSample(it: BoardItem, canvas: HTMLElement): void;
+  /** 把这个情绪板弹成置顶参考小窗（2026-11-20，只读） */
+  openReference?(): void;
   desktop: boolean;
 }
 
@@ -1573,6 +1575,10 @@ export class BoardView {
       { label: t('board.fit'), icon: ICON_FIT, disabled: !b.items.length, run: () => this.fitAll() },
     );
     if (this.host.desktop) items.push('divider', { label: t('board.addImages'), icon: ICON_PLUS, run: () => void this.pickAndAdd() });
+    // 置顶参考小窗（2026-11-20）
+    if (this.host.openReference) {
+      items.push('divider', { label: t('ref.openBoard'), icon: ICON_PIN, disabled: !b.items.length, run: () => this.host.openReference?.() });
+    }
     items.push('divider', { label: t('board.rename'), icon: ICON_PENCIL, run: () => this.host.rename(x, y) });
     this.host.contextMenu(items, x, y, t('ctx.label', { name: b.name }));
   };

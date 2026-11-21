@@ -326,4 +326,10 @@ export const zhTW: Record<MessageKey, string> = {
   'compare.paired': '已配成一對，以後點資訊卡上的「對比」就能打開',
   'compare.unpair': '取消配對',
   'compare.unpaired': '已取消配對',
+  'ref.open': '在置頂小窗中打開',
+  'ref.openBoard': '把情緒板放進置頂小窗',
+  'ref.opacity': '不透明度',
+  'ref.pin': '釘在最上面',
+  'ref.close': '關閉小窗',
+  'ref.desktopOnly': '置頂小窗只能在桌面版裡用',
 };

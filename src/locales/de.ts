@@ -325,4 +325,10 @@ export const de: Record<MessageKey, string> = {
   'compare.paired': 'Verknüpft. Über den Vergleichen-Knopf der Infokarte wieder öffnen',
   'compare.unpair': 'Verknüpfung lösen',
   'compare.unpaired': 'Verknüpfung gelöst',
+  'ref.open': 'In angeheftetem Fenster öffnen',
+  'ref.openBoard': 'Moodboard in angeheftetem Fenster öffnen',
+  'ref.opacity': 'Deckkraft',
+  'ref.pin': 'Immer im Vordergrund',
+  'ref.close': 'Fenster schließen',
+  'ref.desktopOnly': 'Angeheftete Fenster gibt es nur in der Desktop-App',
 };

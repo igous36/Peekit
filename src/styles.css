@@ -2481,6 +2481,142 @@ button:focus-visible {
   accent-color: var(--color-accent);
 }
 
+/* ───────────── 置顶参考小窗（2026-11-20，src/ref/reference.ts） ─────────────
+   窗口本身是透明的（Rust 的 open_reference），内容是一块圆角 10 的面板：一幅画用全屏的深色底，情绪板用应用底色。
+   顶部浮出一条深色半透明的细工具栏（标题可以拖动窗口、不透明度、翻转、钉在最上面、关闭），停 1.6 秒收起 */
+html.is-ref,
+html.is-ref body {
+  background: transparent;
+}
+
+.ref {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--color-fullscreen-bg);
+}
+
+.ref--board {
+  background: var(--color-bg);
+}
+
+.ref-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.ref.is-panning .ref-view {
+  cursor: grabbing;
+}
+
+.ref-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.ref-img {
+  display: block;
+  user-select: none;
+}
+
+.ref-photo {
+  position: absolute;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--ring, transparent), 0 8px 22px -8px rgba(0, 0, 0, 0.45);
+}
+
+.ref-photo .art-canvas {
+  border-radius: 4px;
+}
+
+.ref.is-flipped .ref-img,
+.ref.is-flipped .ref-photo .art-canvas {
+  transform: scaleX(-1);
+}
+
+.ref.is-gray .ref-img,
+.ref.is-gray .ref-photo .art-canvas {
+  filter: grayscale(1);
+}
+
+.ref-bar {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 12px;
+  border-radius: 9px;
+  background: rgba(22, 22, 22, 0.72);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.86);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+
+.ref.show-bar .ref-bar,
+.ref-bar:focus-within {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.ref-title {
+  flex: 1;
+  min-width: 0;
+  font: 500 12px/34px var(--font-family-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.ref-opacity {
+  width: 72px;
+  margin: 0 4px;
+  accent-color: var(--color-accent);
+}
+
+.ref-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.ref-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.ref-btn.is-on {
+  color: var(--color-accent);
+}
+
+:root[data-transparency='reduced'] .ref-bar {
+  background: #262626;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 /* ───────────── 删除确认框（2026-11-20，confirm-dialog.ts） ─────────────
    屏幕中央，和关于对话框同一套遮罩、白卡、按钮；只有一句“删除「xxx」？”和取消 / 删除。
    删除按钮用墨色实心（不用红色，保持只有一个强调色） */

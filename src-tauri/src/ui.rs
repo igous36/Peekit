@@ -108,6 +108,33 @@ pub async fn save_export(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     .map_err(|e| e.to_string())?
 }
 
+/// 置顶参考小窗（2026-11-20）：开一个无边框、钉在所有窗口最上面的小窗，加载同一个前端（index.html?ref=…），
+/// 前端看到 ref 参数就只显示一幅画或一个只读的情绪板（src/ref/reference.ts）。query 由前端拼好（已经 URL 编码）。
+/// 窗口透明：前端可以调整内容的不透明度，透出后面的绘画软件。可以同时开好几个（label 是 ref-1、ref-2…）
+#[tauri::command]
+pub async fn open_reference(app: AppHandle, query: String, width: f64, height: f64, title: String) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+    if query.contains('#') {
+        return Err("参数不对".into());
+    }
+    let label = format!("ref-{}", N.fetch_add(1, Ordering::Relaxed) + 1);
+    let url = tauri::WebviewUrl::App(format!("index.html?{query}").into());
+    tauri::WebviewWindowBuilder::new(&app, &label, url)
+        .title(title)
+        .inner_size(width.clamp(200.0, 1600.0), height.clamp(160.0, 1200.0))
+        .min_inner_size(160.0, 120.0)
+        .decorations(false)
+        .always_on_top(true)
+        .transparent(true)
+        .shadow(true)
+        .resizable(true)
+        .focused(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// %XX 解码（文件名里的中文等，前端用 encodeURIComponent 编码）；不合法的 % 原样保留
 fn percent_decode(s: &str) -> String {
     let hex = |c: u8| (c as char).to_digit(16).map(|v| v as u8);

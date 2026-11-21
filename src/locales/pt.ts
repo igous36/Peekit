@@ -325,4 +325,10 @@ export const pt: Record<MessageKey, string> = {
   'compare.paired': 'Pareadas. Abra de novo pelo botão de comparar do cartão',
   'compare.unpair': 'Desfazer par',
   'compare.unpaired': 'Par desfeito',
+  'ref.open': 'Abrir numa janela fixada',
+  'ref.openBoard': 'Abrir o moodboard numa janela fixada',
+  'ref.opacity': 'Opacidade',
+  'ref.pin': 'Sempre por cima',
+  'ref.close': 'Fechar janela',
+  'ref.desktopOnly': 'Janelas fixadas só funcionam no app para computador',
 };

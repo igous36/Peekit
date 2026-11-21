@@ -32,6 +32,14 @@ async function boot(): Promise<void> {
   const mount = document.getElementById('app');
   if (!mount) return;
 
+  // 置顶参考小窗（2026-11-20）：地址带 ?ref=… 时只显示一幅画或一个只读情绪板，不建整个应用
+  const params = new URLSearchParams(location.search);
+  if (params.get('ref')) {
+    const { bootReference } = await import('./ref/reference');
+    await bootReference(params, mount);
+    return;
+  }
+
   const desktop = isTauri();
   if (desktop) {
     // 自检：设计变量没生效（比如被 CSP 拦了）时界面会整个没有颜色，打到终端里方便定位
@@ -96,6 +104,10 @@ async function boot(): Promise<void> {
   if (perf === '1' || perf === 'board') {
     const { runPerfProbe, runBoardProbe } = await import('./perf');
     await (perf === 'board' ? runBoardProbe(app) : runPerfProbe(app));
+  } else if (perf === 'ref') {
+    // 置顶参考小窗自检（2026-11-20）：开一个单幅、一个情绪板的小窗，小窗把加载结果打到终端，然后关掉主窗口
+    const { runRefProbe } = await import('./perf');
+    await runRefProbe(app);
   }
 }
 

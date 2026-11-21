@@ -99,6 +99,29 @@ export async function runBoardProbe(app: App): Promise<void> {
   await getCurrentWindow().close();
 }
 
+/**
+ * 置顶参考小窗自检（2026-11-20，PEEKIT_PERF=ref）：等作品库读好，给当前这幅开一个小窗、
+ * 给第一个有照片的情绪板开一个小窗；小窗加载好会自己往终端打一行（ref/reference.ts）。
+ * 等几秒后关掉主窗口，顺便检验“主窗口关掉时小窗一起关”。不改保存的数据
+ */
+export async function runRefProbe(app: App): Promise<void> {
+  app.freezeSaving();
+  for (let i = 0; i < 50 && !app.works.length; i++) await sleep(200);
+  const w = app.works[app.controller.targetIndex()];
+  info(`REF 作品 ${app.works.length} 幅，当前 ${w?.title ?? '无'}`);
+  try {
+    if (w) await app.openWorkReference(w);
+    const b = app.boardList().find((x) => x.items.length);
+    if (b) await app.openBoardReference(b.id);
+    else info('REF 没有有照片的情绪板，跳过');
+  } catch (err) {
+    info(`REF 出错 ${String(err)}`);
+  }
+  await sleep(6000);
+  info('REF 关主窗口');
+  await getCurrentWindow().close();
+}
+
 export async function runPerfProbe(app: App): Promise<void> {
   app.freezeSaving();
 

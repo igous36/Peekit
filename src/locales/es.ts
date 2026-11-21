@@ -325,4 +325,10 @@ export const es: Record<MessageKey, string> = {
   'compare.paired': 'Emparejadas. Ábrelas de nuevo con el botón de comparar de la ficha',
   'compare.unpair': 'Desemparejar',
   'compare.unpaired': 'Desemparejadas',
+  'ref.open': 'Abrir en una ventana fijada',
+  'ref.openBoard': 'Abrir el moodboard en una ventana fijada',
+  'ref.opacity': 'Opacidad',
+  'ref.pin': 'Siempre encima',
+  'ref.close': 'Cerrar ventana',
+  'ref.desktopOnly': 'Las ventanas fijadas solo funcionan en la app de escritorio',
 };

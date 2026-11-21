@@ -325,4 +325,10 @@ export const ja: Record<MessageKey, string> = {
   'compare.paired': 'ペアにしました。作品情報の「比較」ボタンからいつでも開けます',
   'compare.unpair': 'ペアを解除',
   'compare.unpaired': 'ペアを解除しました',
+  'ref.open': '最前面の小窓で開く',
+  'ref.openBoard': 'ボードを最前面の小窓で開く',
+  'ref.opacity': '不透明度',
+  'ref.pin': '常に最前面',
+  'ref.close': '小窓を閉じる',
+  'ref.desktopOnly': '最前面の小窓はデスクトップ版でのみ使えます',
 };

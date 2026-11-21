@@ -325,4 +325,10 @@ export const ko: Record<MessageKey, string> = {
   'compare.paired': '짝을 지었습니다. 작품 정보의 비교 버튼으로 다시 열 수 있습니다',
   'compare.unpair': '짝 해제',
   'compare.unpaired': '짝을 해제했습니다',
+  'ref.open': '항상 위 작은 창으로 열기',
+  'ref.openBoard': '무드보드를 항상 위 작은 창으로 열기',
+  'ref.opacity': '불투명도',
+  'ref.pin': '항상 위에 표시',
+  'ref.close': '작은 창 닫기',
+  'ref.desktopOnly': '항상 위 작은 창은 데스크톱 앱에서만 쓸 수 있습니다',
 };

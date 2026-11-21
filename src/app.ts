@@ -32,7 +32,7 @@ import {
 } from './updater';
 import { onPrefsChange, prefs } from './prefs';
 import {
-  svgIcon, ICON_CLOSE, ICON_COMPARE, ICON_COPY, ICON_DOWNLOAD, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
+  svgIcon, ICON_CLOSE, ICON_COMPARE, ICON_COPY, ICON_DOWNLOAD, ICON_PIN, ICON_FOLDER, ICON_PALETTE, ICON_PENCIL, ICON_REMOVE, ICON_STAR, ICON_TRASH,
 } from './view/dom';
 import { clampRating, filterByRating, passes, ratingFromKey, toggleRating, viewIndexOf } from './engine/rating';
 import { CHECK_KEYS, CHECK_KINDS, NO_CHECKS, anyCheck, checkFromKey, toggleCheck, type CheckKind, type CheckState } from './engine/checks';
@@ -71,7 +71,7 @@ import { nameFromSources } from './data/sets';
 import { GIF_ANIM_BUDGET, gifCandidates, gifMayAnimate, imageKind } from './data/formats';
 import {
   appVersion, assetUrl, classifyDropped, copyImage, diagnoseImage, logError, makeDisplay, makeThumbnail, onFileDrop, openExternal,
-  MINI_EDGE, pickFiles, pickFolders, revealInFolder, saveExport, saveImageAs, scanSources, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
+  MINI_EDGE, openReferenceWindow, pickFiles, pickFolders, revealInFolder, saveExport, saveImageAs, scanSources, setWindowFullscreen, updaterDeps, updateProbeMode, logInfo,
 } from './data/tauri-io';
 import type { Source } from './data/library';
 import { ThumbLoader } from './data/thumb-loader';
@@ -359,6 +359,7 @@ export class App {
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
       openCalendar: () => this.openCalendar(),
+      openBoardReference: (id) => void this.openBoardReference(id),
       confirm: (opts, run) => this.confirmDialog.open(opts, run),
     });
     this.ctxMenu = new ContextMenu();
@@ -526,6 +527,10 @@ export class App {
         this.renamePop.open({ name: b.name, color: '' }, x, y, (name) => this.renameBoard(b.id, name), { title: t('board.renameTitle') });
       },
       paintSample: (it, canvas) => fillArt(canvas, this.workOfItem(it), undefined),
+      openReference: () => {
+        const b = this.boardView.board;
+        if (b) void this.openBoardReference(b.id);
+      },
       desktop: this.service.desktop,
     });
     this.picker = new BoardPicker({
@@ -1833,6 +1838,41 @@ export class App {
     return assetUrl(w.path);
   }
 
+  // ───────────── 置顶参考小窗（2026-11-20） ─────────────
+
+  /** 一幅画弹成置顶小窗：长边 560，按画的比例 */
+  async openWorkReference(w: Work): Promise<void> {
+    const src = (await this.originalUrl(w)) ?? '';
+    if (!src && !this.service.desktop) {
+      this.toast.show(t('ref.desktopOnly'));
+      return;
+    }
+    const a = w.width && w.height ? w.width / w.height : 0.8;
+    const long = 560;
+    const width = a >= 1 ? long : long * a, height = a >= 1 ? long / a : long;
+    const q = new URLSearchParams({ ref: 'work', src, title: displayTitle(w), w: String(w.width ?? 0), h: String(w.height ?? 0) });
+    await openReferenceWindow(q.toString(), width, height, displayTitle(w)).catch((err) =>
+      this.toast.show(t('toast.actionFailed', { msg: String(err) })),
+    );
+  }
+
+  /** 全部情绪板（自检用） */
+  boardList(): readonly Board[] {
+    return this.boards.boards;
+  }
+
+  /** 一个情绪板弹成置顶小窗（只读，主窗口改了跟着刷新） */
+  async openBoardReference(id: string): Promise<void> {
+    const b = this.boards.byId(id);
+    if (!b) return;
+    // 小窗是从存档读的：先把没写盘的改动写进去（性能探针冻结保存时不写）
+    await this.boards.flush();
+    const q = new URLSearchParams({ ref: 'board', id, title: b.name });
+    await openReferenceWindow(q.toString(), 720, 520, b.name).catch((err) =>
+      this.toast.show(t('toast.actionFailed', { msg: String(err) })),
+    );
+  }
+
   // ───────────── 新旧对比（2026-11-20） ─────────────
 
   /** id → 作品（全部作品），作品列表换了才重建；每帧判断信息卡要不要显示“对比”按钮也用它 */
@@ -2087,6 +2127,11 @@ export class App {
       const p = this.partner(cur);
       if (p) add(act(t('compare.openWith', { title: displayTitle(p) }), () => this.showCompare(cur, p), { keywords: 'compare redraw before after' }), true);
       add(act(t('compare.pickMenu'), () => this.pickPartner(cur), { keywords: 'compare redraw before after pair' }));
+      add(act(t('ref.open'), () => void this.openWorkReference(cur), { keywords: 'reference pin always on top window float' }));
+    }
+    if (this.boardView.isOpen && this.boardView.board) {
+      const id = this.boardView.board.id;
+      add(act(t('ref.openBoard'), () => void this.openBoardReference(id), { keywords: 'reference pin always on top window float board' }), true);
     }
     add(act(t('about.menu'), () => void this.about.open(), { keywords: 'about version update' }));
     return out;
@@ -2168,7 +2213,8 @@ export class App {
       if (w.raw) items.push({ label: t('ctx.saveRawAs'), icon: ICON_DOWNLOAD, run: saveAs(w.raw) });
       items.push({ label: t('ctx.reveal'), icon: ICON_FOLDER, run: () => void revealInFolder(file).catch(fail) }, 'divider');
     }
-    // 新旧对比（2026-11-20）
+    // 置顶参考小窗、新旧对比（2026-11-20）
+    items.push({ label: t('ref.open'), icon: ICON_PIN, run: () => void this.openWorkReference(w) });
     const p = this.partner(w);
     if (p) items.push({ label: t('compare.openWith', { title: displayTitle(p) }), icon: ICON_COMPARE, run: () => this.showCompare(w, p) });
     items.push({ label: t('compare.pickMenu'), icon: ICON_COMPARE, run: () => this.pickPartner(w) });

@@ -44,11 +44,14 @@ export function setContextItems(
   s: SetInfo,
   act: { rename: () => void; duplicate: () => void; remove: () => void },
   deleteLabel = t('ctx.deleteSet'),
+  /** 删除前面再加几项（2026-11-20：情绪板的“在置顶小窗中打开”） */
+  extra: CtxItem[] = [],
 ): CtxItem[] {
   return [
     { caption: s.name },
     { label: t('ctx.renameSet'), icon: ICON_PENCIL, run: act.rename },
     { label: t('ctx.duplicateSet'), icon: ICON_COPY, run: act.duplicate },
+    ...extra,
     'divider',
     { label: deleteLabel, icon: ICON_TRASH, danger: true, run: act.remove },
   ];

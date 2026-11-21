@@ -325,4 +325,10 @@ export const it: Record<MessageKey, string> = {
   'compare.paired': 'Abbinate. Riaprile con il pulsante di confronto della scheda',
   'compare.unpair': 'Separa',
   'compare.unpaired': 'Separate',
+  'ref.open': 'Apri in una finestra fissata',
+  'ref.openBoard': 'Apri la moodboard in una finestra fissata',
+  'ref.opacity': 'Opacità',
+  'ref.pin': 'Sempre in primo piano',
+  'ref.close': 'Chiudi finestra',
+  'ref.desktopOnly': 'Le finestre fissate funzionano solo nell’app desktop',
 };

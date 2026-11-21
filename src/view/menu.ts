@@ -39,7 +39,7 @@ import { setThemePref, themePref } from '../theme';
 import { prefs, setPref, wheelCanToggleFullscreen, type Prefs } from '../prefs';
 import { toggleReduceTransparency, transparencyReduced } from '../transparency';
 import {
-  el, svgIcon, ICON_BLUR, ICON_CALENDAR, ICON_CHECK, ICON_DOWNLOAD, ICON_FLIP, ICON_GRAY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV,
+  el, svgIcon, ICON_BLUR, ICON_CALENDAR, ICON_CHECK, ICON_PIN, ICON_DOWNLOAD, ICON_FLIP, ICON_GRAY, ICON_INFO, ICON_NEXT, ICON_PENCIL, ICON_PLUS, ICON_PREV,
   ICON_SEARCH, ICON_SLIDERS, ICON_TRASH,
 } from './dom';
 import { percentOf, type UpdateState } from '../updater';
@@ -123,6 +123,8 @@ export interface MenuHandlers {
   openPalette: () => void;
   /** 打开创作年历（2026-11-20） */
   openCalendar: () => void;
+  /** 把情绪板弹成置顶参考小窗（2026-11-20） */
+  openBoardReference: (id: string) => void;
   /** 屏幕中央的确认框（2026-11-20，删除预览集 / 情绪板）：点了确认才调用 run */
   confirm: (opts: ConfirmOptions, run: () => void) => void;
 }
@@ -519,7 +521,14 @@ export class AppMenu {
         this.dropdown.focusItem((x) => x.dataset.set === id);
       },
       remove: () => this.beginDelete(s, ops),
-    }, ops === this.boardOps ? t('board.delete') : undefined);
+    }, ops === this.boardOps ? t('board.delete') : undefined, ops === this.boardOps ? [{
+      // 置顶参考小窗（2026-11-20）
+      label: t('ref.openBoard'), icon: ICON_PIN, disabled: s.count === 0,
+      run: () => {
+        this.dropdown.close(false);
+        this.handlers.openBoardReference(s.id);
+      },
+    }] : []);
     this.handlers.contextMenu(items, x, y, t('ctx.label', { name: s.name }));
   }
 

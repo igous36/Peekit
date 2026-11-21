@@ -6,6 +6,7 @@
 import { isTauri } from '@tauri-apps/api/core';
 import type { SavedSets } from './sets';
 import type { SavedBoards } from './boards';
+import { notifyBoardsSaved } from './tauri-io';
 
 export const STORE_FILE = 'library.json';
 const SETS_KEY = 'sets';
@@ -65,6 +66,8 @@ class TauriLibraryStore implements LibraryStore {
       .then(async (st) => {
         await prev;
         await st.set(BOARDS_KEY, data);
+        // 置顶小窗里开着的只读情绪板跟着刷新（2026-11-20）
+        notifyBoardsSaved();
       })
       .catch((err) => console.error('保存情绪板失败', err));
   }

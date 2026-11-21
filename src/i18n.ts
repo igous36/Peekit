@@ -347,6 +347,12 @@ const zh = {
   'compare.paired': '已配成一对，以后点信息卡上的“对比”就能打开',
   'compare.unpair': '取消配对',
   'compare.unpaired': '已取消配对',
+  'ref.open': '在置顶小窗中打开',
+  'ref.openBoard': '把情绪板放进置顶小窗',
+  'ref.opacity': '不透明度',
+  'ref.pin': '钉在最上面',
+  'ref.close': '关闭小窗',
+  'ref.desktopOnly': '置顶小窗只能在桌面版里用',
 };
 
 export type MessageKey = keyof typeof zh;
@@ -675,6 +681,12 @@ const en: Record<MessageKey, string> = {
   'compare.paired': 'Paired. Use the compare button on the info card to open it again',
   'compare.unpair': 'Unpair',
   'compare.unpaired': 'Unpaired',
+  'ref.open': 'Open in a pinned window',
+  'ref.openBoard': 'Open board in a pinned window',
+  'ref.opacity': 'Opacity',
+  'ref.pin': 'Keep on top',
+  'ref.close': 'Close window',
+  'ref.desktopOnly': 'Pinned windows only work in the desktop app',
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {

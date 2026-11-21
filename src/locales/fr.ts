@@ -325,4 +325,10 @@ export const fr: Record<MessageKey, string> = {
   'compare.paired': 'Associées. Le bouton de comparaison de la fiche les rouvre',
   'compare.unpair': 'Dissocier',
   'compare.unpaired': 'Dissociées',
+  'ref.open': 'Ouvrir dans une fenêtre épinglée',
+  'ref.openBoard': 'Ouvrir le moodboard dans une fenêtre épinglée',
+  'ref.opacity': 'Opacité',
+  'ref.pin': 'Toujours au premier plan',
+  'ref.close': 'Fermer la fenêtre',
+  'ref.desktopOnly': 'Les fenêtres épinglées ne marchent que dans l’application de bureau',
 };

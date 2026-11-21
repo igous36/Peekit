@@ -68,6 +68,17 @@ pub fn run() {
             thumbs::prepare(app.handle());
             Ok(())
         })
+        // 主窗口关掉时，置顶参考小窗（ref-*）一起关，应用不会留在后台（2026-11-20）
+        .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                for (label, w) in window.app_handle().webview_windows() {
+                    if label.starts_with("ref-") {
+                        let _ = w.close();
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             scan::scan_sources,
             thumbs::make_thumbnail,
@@ -75,6 +86,7 @@ pub fn run() {
             ui::set_theme_background,
             ui::save_image_as,
             ui::save_export,
+            ui::open_reference,
             log_error,
             log_info,
             asset_check,

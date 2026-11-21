@@ -70,8 +70,9 @@ src/
   transparency.ts  降低透明度（跟随系统或偏好设置，挂 <html data-transparency>）
   prefs.ts         偏好设置
   updater.ts       自动更新的状态机
-  perf.ts          性能探针
+  perf.ts          性能探针（还有置顶小窗的自检）
   perf-board.ts    情绪板压测
+  ref/             置顶参考小窗（另一个窗口里只跑这里）
 src-tauri/src/
   lib.rs           命令注册和插件
   scan.rs          扫描导入的文件和文件夹，读尺寸，RAW 和同名 JPG 配对
@@ -81,7 +82,7 @@ src-tauri/src/
   raw.rs           从相机 RAW 里找内嵌的 JPEG 预览
   svg.rs           读 SVG 的尺寸
   asset_scope.rs   asset 协议的访问范围
-  ui.rs            窗口底色、另存为、保存导出的文件（save_export）
+  ui.rs            窗口底色、另存为、保存导出的文件（save_export）、置顶参考小窗（open_reference）
 scripts/release.mjs  发版打包
 scripts/bench-board.ts  情绪板几何算法的压测
 ```
@@ -103,6 +104,14 @@ scripts/bench-board.ts  情绪板几何算法的压测
 预览集修改后 800ms 写一次盘，情绪板 600ms。切换预览集前和安装更新前会立刻写盘（`LibraryService.flush()`、`BoardStore.flush()`），因为安装程序会直接关掉应用。
 
 语言、深浅色、偏好设置（包括降低透明度，没拨过开关时是 null，表示跟随系统）、计数圆环的显示方式记在 localStorage（`peekit:` 开头的 key）。画师自检的开关只在内存里。
+
+## 置顶参考小窗
+
+Rust 的 `open_reference`（`ui.rs`）开一个无边框、透明、钉在最上面的新窗口，label 是 `ref-1`、`ref-2`…，加载同一个前端，地址带 `?ref=work&src=…` 或 `?ref=board&id=…`。`main.ts` 看到 `ref` 参数就只跑 `src/ref/reference.ts`，不建整个应用。小窗的权限在 `capabilities/reference.json`（窗口名 `ref-*`）：拖动、改大小、关闭、钉在最上面、读 library.json。
+
+一幅画直接用原图地址（TIFF / RAW 是显示用大图，由主窗口算好传过去）。情绪板从 library.json 读，照片的缩略图在小窗里自己请求；主窗口每次把情绪板写进 store 后发一个 `peekit:boards-saved` 事件，小窗收到就重新读。主窗口关掉时（`lib.rs` 的 `on_window_event`）把所有 `ref-*` 窗口一起关掉。
+
+`PEEKIT_PERF=ref`：启动后给当前作品和第一个有照片的情绪板各开一个小窗，小窗加载好会往终端打一行，6 秒后关掉主窗口（顺便检验小窗跟着关）。
 
 ## 导出
 

@@ -326,4 +326,10 @@ export const ar: Record<MessageKey, string> = {
   'compare.paired': 'تم الإقران. افتحه مجددًا من زر المقارنة في بطاقة المعلومات',
   'compare.unpair': 'إلغاء الإقران',
   'compare.unpaired': 'أُلغي الإقران',
+  'ref.open': 'فتح في نافذة مثبتة',
+  'ref.openBoard': 'فتح لوحة الإلهام في نافذة مثبتة',
+  'ref.opacity': 'العتامة',
+  'ref.pin': 'دائمًا في المقدمة',
+  'ref.close': 'إغلاق النافذة',
+  'ref.desktopOnly': 'النوافذ المثبتة تعمل في تطبيق سطح المكتب فقط',
 };

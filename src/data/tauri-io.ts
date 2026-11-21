@@ -135,6 +135,35 @@ export function logInfo(msg: string): void {
 
 /** 原图另存为：Rust 端弹系统的保存对话框再复制文件。返回保存到的路径，取消时为 null */
 /**
+ * 置顶参考小窗（2026-11-20）：桌面版开一个无边框、钉在最上面的新窗口（Rust 的 open_reference）；
+ * 浏览器调试时开一个弹出窗口。query 是拼好的参数（ref=work… / ref=board…）
+ */
+export async function openReferenceWindow(query: string, width: number, height: number, title: string): Promise<void> {
+  if (isTauri()) {
+    await invoke('open_reference', { query, width: Math.round(width), height: Math.round(height), title });
+    return;
+  }
+  window.open(`${location.pathname}?${query}`, '_blank', `popup,width=${Math.round(width)},height=${Math.round(height)}`);
+}
+
+/** 情绪板写进 library.json 之后通知别的窗口（置顶小窗里的只读情绪板跟着刷新） */
+export function notifyBoardsSaved(): void {
+  if (!isTauri()) return;
+  void import('@tauri-apps/api/event').then((m) => m.emit('peekit:boards-saved')).catch(() => {});
+}
+
+/** 置顶小窗：主窗口保存了情绪板（浏览器调试时是别的标签页改了 localStorage） */
+export function onBoardsSaved(cb: () => void): void {
+  if (isTauri()) {
+    void import('@tauri-apps/api/event').then((m) => m.listen('peekit:boards-saved', () => cb())).catch(() => {});
+  } else {
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'peekit:boards') cb();
+    });
+  }
+}
+
+/**
  * 导出（2026-11-20）：把前端生成好的文件（PNG / JPG / PDF）存到用户选的位置。
  * 桌面版弹系统保存对话框（默认在“图片”文件夹），返回保存到的路径，取消返回 null；
  * 浏览器调试时直接下载，返回文件名

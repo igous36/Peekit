@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "reference",
+  "description": "置顶参考小窗（2026-11-20，窗口名 ref-1、ref-2…）：无边框窗口的拖动、关闭、最小化、改大小、钉在最上层 + 只读情绪板（读 library.json）+ 听主窗口“情绪板已保存”的事件",
+  "windows": ["ref-*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-focus",
+    "store:default"
+  ]
+}
