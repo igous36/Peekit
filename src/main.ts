@@ -108,6 +108,10 @@ async function boot(): Promise<void> {
     // 置顶参考小窗自检（2026-11-20）：开一个单幅、一个情绪板的小窗，小窗把加载结果打到终端，然后关掉主窗口
     const { runRefProbe } = await import('./perf');
     await runRefProbe(app);
+  } else if (perf === 'export') {
+    // 导出自检（2026-11-21）：用真实作品各导出一次长图（高清，读原图）、网格、拼图、PDF，只打日志不保存，然后关掉主窗口
+    const { runExportProbe } = await import('./perf');
+    await runExportProbe(app);
   }
 }
 

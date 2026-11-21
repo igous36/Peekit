@@ -122,6 +122,51 @@ export async function runRefProbe(app: App): Promise<void> {
   await getCurrentWindow().close();
 }
 
+/**
+ * 导出自检（2026-11-21，PEEKIT_PERF=export）：取前 8 幅读得了的作品，各导出一次长图（2 倍尺寸，会读原图）、
+ * 3 列网格（PNG）、4:3 拼图、A4 横版 PDF。打出尺寸、大小、耗时；图片版再抽查画上去的像素不全是底色。不保存文件
+ */
+export async function runExportProbe(app: App): Promise<void> {
+  app.freezeSaving();
+  for (let i = 0; i < 50 && !app.works.length; i++) await sleep(200);
+  const ws = app.works.filter((w) => !w.broken).slice(0, 8);
+  info(`EXPORT 作品 ${app.works.length} 幅，取 ${ws.length} 幅`);
+  const runs = [
+    { layout: 'long', size: 2, format: 'jpg', captions: true, summary: true },
+    { layout: 'grid', columns: 3, size: 1, format: 'png', captions: true },
+    { layout: 'collage', ratio: '4:3', size: 1, format: 'jpg', captions: false },
+    { layout: 'pdf', page: 'a4-landscape', size: 1, captions: true, summary: true },
+  ] as const;
+  for (const patch of runs) {
+    const t0 = performance.now();
+    try {
+      const bytes = await app.exportBytes(ws, patch);
+      let detail = '';
+      if (patch.layout === 'pdf') {
+        const head = new TextDecoder('latin1').decode(bytes.slice(0, 8));
+        const pages = /\/Count (\d+)/.exec(new TextDecoder('latin1').decode(bytes.slice(0, 4000)))?.[1];
+        detail = `${head.trim()} ${pages} 页`;
+      } else {
+        const bmp = await createImageBitmap(new Blob([bytes as BlobPart]));
+        // 抽查第一幅中间一小块：有颜色变化说明图真的画上去了（不是只有底色或主色块）
+        const c = new OffscreenCanvas(bmp.width, bmp.height);
+        const g = c.getContext('2d')!;
+        g.drawImage(bmp, 0, 0);
+        const px = g.getImageData(Math.round(bmp.width / 2) - 40, Math.round(bmp.height * 0.12), 80, 80).data;
+        const lum = new Set<number>();
+        for (let k = 0; k < px.length; k += 4) lum.add((px[k] + px[k + 1] + px[k + 2]) >> 4);
+        detail = `${bmp.width}×${bmp.height} 抽查色阶 ${lum.size}`;
+        bmp.close();
+      }
+      info(`EXPORT ${patch.layout} ${detail} ${Math.round(bytes.length / 1024)} KB ${Math.round(performance.now() - t0)} ms`);
+    } catch (err) {
+      info(`EXPORT ${patch.layout} 出错 ${String(err)}`);
+    }
+  }
+  info('EXPORT 关主窗口');
+  await getCurrentWindow().close();
+}
+
 export async function runPerfProbe(app: App): Promise<void> {
   app.freezeSaving();
 

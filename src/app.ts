@@ -46,6 +46,8 @@ import { sampleImage, sampleSvg } from './data/palette-loader';
 import { Palette } from './view/palette';
 import { ConfirmDialog } from './view/confirm-dialog';
 import { CalendarView } from './view/calendar';
+import { ExportView, type Saved as ExportSaved } from './view/export-view';
+import { loadExportImage } from './data/export-images';
 import { CompareViewer } from './view/compare';
 import { pairWorks, partnerOf, unpair } from './engine/compare';
 import { drawYearPoster } from './view/year-poster';
@@ -168,6 +170,7 @@ export class App {
   private confirmDialog: ConfirmDialog;
   /** 创作年历（2026-11-20） */
   private calendar: CalendarView;
+  private exporter: ExportView;
   /** 新旧对比（2026-11-20） */
   private compare: CompareViewer;
   /** 筛选时编辑卡的系列芯片按全部作品算（被筛掉的作品所在的系列也要能选） */
@@ -359,6 +362,7 @@ export class App {
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
       openCalendar: () => this.openCalendar(),
+      openExport: () => this.openExport(),
       openBoardReference: (id) => void this.openBoardReference(id),
       confirm: (opts, run) => this.confirmDialog.open(opts, run),
     });
@@ -392,6 +396,35 @@ export class App {
       },
       close: () => this.closeCalendar(),
       exportYear: (stats, works) => void this.exportYear(stats, works),
+    });
+    // 导出（2026-11-21）：长图、网格、拼图、PDF 作品集
+    this.exporter = new ExportView({
+      all: () => this.full.works,
+      filtered: () => (this.filtering ? this.lib.works : null),
+      series: () => {
+        const cur = this.target();
+        if (!cur) return null;
+        const s = this.seriesById.get(cur.series);
+        return { name: s ? displayName(s) : t('series.unassigned'), works: this.full.works.filter((w) => w.series === cur.series) };
+      },
+      setName: () => this.service.current.name,
+      thumb: (w) => (!w.path || w.broken ? null : w.thumb),
+      makeThumb: (w) => this.ensureThumb(w),
+      images: (works) => {
+        const deps = { thumbUrl: (w: Work) => this.ensureThumb(w), originalUrl: (w: Work) => this.originalUrl(w) };
+        return {
+          load: async (i, pw, ph) => {
+            const d = await loadExportImage(works[i], pw, ph, deps);
+            if (!d && works[i].path) logInfo(`[导出] 读不了 ${works[i].path}`);
+            return d;
+          },
+          bg: (i) => works[i].bg,
+          shapes: (i) => (works[i].path ? undefined : works[i].shapes),
+        };
+      },
+      save: (bytes, name) => saveExport(bytes, name),
+      toast: (msg, sticky) => this.toast.show(msg, sticky),
+      close: () => this.closeExport(),
     });
     // F5：刷新（2026-11-18，查看 → 刷新）。WebView 默认按 F5 会重新加载整个页面，这里拦掉
     document.addEventListener('keydown', (e) => {
@@ -571,6 +604,7 @@ export class App {
       this.timeline.root,
       this.boardView.root,
       this.calendar.root,
+      this.exporter.root,
       this.compare.root,
       this.toast.root,
       this.checkBar.root,
@@ -602,6 +636,7 @@ export class App {
       this.updateFilterChip();
       this.updateCheckChip();
       this.checkBar.relabel();
+      this.exporter.refresh();
       ctl.kick();
     });
     this.root.addEventListener('pointermove', this.onRevealMove);
@@ -719,7 +754,7 @@ export class App {
   blockKeys(): boolean {
     return (
       this.boardView.isOpen || this.picker.active || this.cmdPalette.isOpen || this.confirmDialog.isOpen ||
-      this.calendar.isOpen || this.compare.isOpen
+      this.calendar.isOpen || this.exporter.isOpen || this.compare.isOpen
     );
   }
 
@@ -1821,15 +1856,7 @@ export class App {
     if (!w.path) return w.shapes ? swatchesFromShapes(w.shapes, w.bg) : null;
     if (w.broken) return null;
     const svg = imageKind(w.path) === 'svg';
-    let url = w.thumb;
-    if (!url) {
-      const { mtime, size } = this.service.fileInfo(w.id);
-      const r = await makeThumbnail(w.path, mtime, size);
-      url = assetUrl(r.path);
-      // 顺手把缩略图和主色记上，舞台上不用再生成一次
-      w.thumb = url;
-      if (r.color) w.bg = r.color;
-    }
+    const url = await this.ensureThumb(w);
     const px = svg ? await sampleSvg(url, 32) : await sampleImage(url, 32);
     return swatchesOf(px);
   }
@@ -1969,6 +1996,7 @@ export class App {
 
   openCalendar(): void {
     if (this.calendar.isOpen) return;
+    if (this.exporter.isOpen) this.closeExport();
     if (this.boardView.isOpen) this.closeBoard();
     if (this.ui.editing) this.finishEdit();
     if (this.controller.fullscreen) this.controller.toggleFullscreen();
@@ -1984,6 +2012,44 @@ export class App {
     const a = document.activeElement;
     if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
     this.controller.kick();
+  }
+
+  // ───────────── 导出（2026-11-21） ─────────────
+
+  openExport(): void {
+    if (this.exporter.isOpen) return;
+    if (this.boardView.isOpen) this.closeBoard();
+    if (this.calendar.isOpen) this.closeCalendar();
+    if (this.ui.editing) this.finishEdit();
+    if (this.controller.fullscreen) this.controller.toggleFullscreen();
+    if (this.controller.magnified) this.controller.magnify(false);
+    this.root.classList.add('is-export');
+    this.exporter.show();
+  }
+
+  private closeExport(): void {
+    if (!this.exporter.isOpen) return;
+    this.exporter.hide();
+    this.root.classList.remove('is-export');
+    const a = document.activeElement;
+    if (!a || a === document.body) this.stage.section.focus({ preventScroll: true });
+    this.controller.kick();
+  }
+
+  /** 自检用：按当前导出设置（改掉 patch 里的几项）把这些作品画成文件，不保存 */
+  exportBytes(works: readonly Work[], patch: Partial<ExportSaved>): Promise<Uint8Array> {
+    return this.exporter.render(works, { ...this.exporter.settings, ...patch });
+  }
+
+  /** 一幅的缩略图地址，没有就生成（顺手记上主色，舞台上不用再生成一次） */
+  private async ensureThumb(w: Work): Promise<string> {
+    if (w.thumb) return w.thumb;
+    const { mtime, size } = this.service.fileInfo(w.id);
+    const r = await makeThumbnail(w.path!, mtime, size);
+    const url = assetUrl(r.path);
+    w.thumb = url;
+    if (r.color) w.bg = r.color;
+    return url;
   }
 
   /** 年度回顾导出成一张图 */
@@ -2129,6 +2195,7 @@ export class App {
     add(act(t('sets.new').replace(/^\+\s*/, ''), this.newSet, { keywords: 'new collection set' }));
     add(act(t('board.new'), this.newBoard, { keywords: 'new mood board' }));
     add(act(t('calendar.title'), () => this.openCalendar(), { keywords: 'calendar year review heatmap stats' }), true);
+    add(act(t('export.menu'), () => this.openExport(), { keywords: 'export save long image collage grid pdf portfolio share' }), true);
     // 新旧对比（2026-11-20）：当前这一幅
     const cur = this.target();
     if (cur) {

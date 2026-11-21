@@ -57,13 +57,16 @@ src/
                    放大框、时间轴刻度、取主题色、月份、情绪板几何（board-layout）、网格空间索引（box-grid）、
                    拖起阵列（picker）、星级和按星筛选（rating）、主色组成和按颜色筛选（swatches）、
                    时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）、创作年历统计（calendar）、
-                   新旧对比的配对和同步缩放（compare）、情绪板标注的数据和几何（marks）
+                   新旧对比的配对和同步缩放（compare）、情绪板标注的数据和几何（marks）、
+                   导出排版（export-layout）
   view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器、关于对话框、
                    拖起阵列（board-picker.ts）、情绪板画布（board/，标注层在 board-marks.ts）、星星（stars.ts）、
                    自检工具条（check-bar.ts）、命令面板（palette.ts）、创作年历（calendar.ts）和
-                   它导出的年度回顾图（year-poster.ts）、新旧对比（compare.ts）……
+                   它导出的年度回顾图（year-poster.ts）、新旧对比（compare.ts）、
+                   导出页（export-view.ts）和把排版画到画布上（export-render.ts）……
   data/            作品库模型、保存、导入和扫描、缩略图队列、取色队列、Rust 调用、
-                   情绪板（boards.ts 数据和增删改，board-store.ts 保存）
+                   情绪板（boards.ts 数据和增删改，board-store.ts 保存）、
+                   导出读图（export-images.ts）、PDF 写入（pdf.ts）
   locales/         除中文和英文以外的 10 种界面语言
   i18n.ts          中文、英文文案和语言切换
   tokens.ts        设计变量（名字和 HANDOFF §3 一致）
@@ -71,7 +74,7 @@ src/
   transparency.ts  降低透明度（跟随系统或偏好设置，挂 <html data-transparency>）
   prefs.ts         偏好设置
   updater.ts       自动更新的状态机
-  perf.ts          性能探针（还有置顶小窗的自检）
+  perf.ts          性能探针（还有置顶小窗、导出的自检）
   perf-board.ts    情绪板压测
   ref/             置顶参考小窗（另一个窗口里只跑这里）
 src-tauri/src/
@@ -116,7 +119,15 @@ Rust 的 `open_reference`（`ui.rs`）开一个无边框、透明、钉在最上
 
 ## 导出
 
-导出的文件（年度回顾图，以后的长图、PDF）都在前端用 canvas 画好，生成字节后交给 `saveExport`（`data/tauri-io.ts`）。桌面版调 Rust 的 `save_export`：文件内容走原始字节（不经过 JSON），默认文件名放在请求头 `x-file-name`（URL 编码），Rust 弹系统保存对话框（默认在“图片”文件夹）后先写临时文件再改名。浏览器调试时直接下载。画图用的图片从 asset 协议 fetch 成 blob 再 `createImageBitmap`，canvas 不会被“污染”，能导出。
+导出的文件（年度回顾图、长图、网格、拼图、PDF 作品集）都在前端用 canvas 画好，生成字节后交给 `saveExport`（`data/tauri-io.ts`）。桌面版调 Rust 的 `save_export`：文件内容走原始字节（不经过 JSON），默认文件名放在请求头 `x-file-name`（URL 编码），Rust 弹系统保存对话框（默认在“图片”文件夹）后先写临时文件再改名。浏览器调试时直接下载。画图用的图片从 asset 协议 fetch 成 blob 再 `createImageBitmap`，canvas 不会被“污染”，能导出。
+
+作品导出（导出页）分三层：`engine/export-layout.ts` 只算坐标（纯函数，有单测）；`view/export-view.ts` 用同一份坐标摆 DOM 做预览（缩略图 + `loading=lazy`，不画画布）；点“导出”时 `view/export-render.ts` 才按导出尺寸读图、画到 canvas 上。读图（`data/export-images.ts`）按要画的大小挑来源：不比缩略图（长边 1600）大就用缩略图，更大才读原图（TIFF / RAW 是显示用大图）；`createImageBitmap` 解码时直接缩到要画的大小，最多同时读 3 幅，读一幅画一幅、马上释放。SVG 按要画的尺寸重新栅格化。
+
+PDF 不引入库（`data/pdf.ts`）：每页先画成一张 canvas、压成 JPEG（质量 0.9），原样放进 PDF（DCTDecode）铺满整页，文字已经画在图里；标题写进文档信息（UTF-16BE）。长图受画布上限约束（单边 30000、面积 1.6 亿像素），超了整张等比缩小。
+
+导出设置记在 localStorage（`peekit:export`），作者名也在里面。
+
+`PEEKIT_PERF=export`：取前 8 幅读得了的作品，各导出一次长图（2 倍尺寸，会读原图）、3 列网格（PNG）、4:3 拼图、A4 横版 PDF，打出尺寸、大小、耗时，图片版抽查第一幅中间一块的色阶，然后关掉主窗口。不保存文件。
 
 ## 图片
 

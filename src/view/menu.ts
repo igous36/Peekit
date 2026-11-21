@@ -123,6 +123,8 @@ export interface MenuHandlers {
   openPalette: () => void;
   /** 打开创作年历（2026-11-20） */
   openCalendar: () => void;
+  /** 打开导出页（2026-11-21） */
+  openExport: () => void;
   /** 把情绪板弹成置顶参考小窗（2026-11-20） */
   openBoardReference: (id: string) => void;
   /** 屏幕中央的确认框（2026-11-20，删除预览集 / 情绪板）：点了确认才调用 run */
@@ -302,6 +304,11 @@ export class AppMenu {
         this.dropdown.close(false);
         this.handlers.openCalendar();
       }, { icon: ICON_CALENDAR }),
+      // 导出（2026-11-21）：长图、拼图、PDF 作品集
+      this.item(t('export.menu'), () => {
+        this.dropdown.close(false);
+        this.handlers.openExport();
+      }, { icon: ICON_DOWNLOAD }),
       this.divider(),
       this.caption('sets.title'),
     );
