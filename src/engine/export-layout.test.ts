@@ -188,3 +188,41 @@ describe('拼图的间距随作品数变', () => {
     }
   });
 });
+
+describe('调间距不改变留白', () => {
+  const mixed = Array.from({ length: 57 }, (_, i) => [1.5, 0.8, 1, 1.2, 0.7][i % 5]);
+
+  it('拼图：作品多时每行铺满左右留白之间，贴着顶部留白；三档间距下边缘都一样', () => {
+    const edges = ([0, 1, 2] as const).map((gap) => {
+      const p = planExport(mixed, { ...base, layout: 'collage', gap }).pages[0];
+      const left = Math.min(...p.cells.map((c) => c.x));
+      const right = Math.max(...p.cells.map((c) => c.x + c.w));
+      const top = Math.min(...p.cells.map((c) => c.y));
+      return { left, right, top, rule: p.rule!.y, ruleX: p.rule!.x, ruleR: p.rule!.x + p.rule!.w };
+    });
+    for (const e of edges) {
+      expect(e.left).toBeCloseTo(e.ruleX, 1);
+      expect(e.right).toBeCloseTo(e.ruleR, 1);
+      expect(e.top).toBeCloseTo(edges[0].top, 1);
+      expect(e.rule).toBeCloseTo(edges[0].rule, 1);
+    }
+  });
+
+  it('长图、网格：作品到说明细线的距离不随间距变', () => {
+    for (const layout of ['long', 'grid'] as const) {
+      const seps = ([0, 1, 2] as const).map((gap) => {
+        const p = planExport(aspects, { ...base, layout, gap }).pages[0];
+        return p.rule!.y - Math.max(...p.cells.map((c) => c.y + c.h));
+      });
+      expect(seps[1]).toBeCloseTo(seps[0], 1);
+      expect(seps[2]).toBeCloseTo(seps[0], 1);
+    }
+  });
+
+  it('作品很少、铺满宽度放不下时，撑满高度、水平居中', () => {
+    const p = planExport([0.7, 0.7], { ...base, layout: 'collage' }).pages[0];
+    const left = Math.min(...p.cells.map((c) => c.x)), right = Math.max(...p.cells.map((c) => c.x + c.w));
+    expect(left - p.rule!.x).toBeCloseTo(p.rule!.x + p.rule!.w - right, 1);
+    expect(left).toBeGreaterThan(p.rule!.x + 10);
+  });
+});

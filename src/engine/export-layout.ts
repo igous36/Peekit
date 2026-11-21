@@ -175,18 +175,21 @@ function brandBesideSummary(page: Page, right: number, titleLine: number, bh: nu
   sm.w = Math.max(0, sm.w - brandWidth(bh) - 40 * u);
 }
 
+/** 作品和下面的说明 / 标识之间的空：跟着留白走，不跟间距（调间距不该挪动说明） */
+const sepFor = (M: number, u: number): number => Math.max(56 * u, 0.6 * M);
+
 /** 内容底 y 之后接上说明（和标识），定出整页高度 */
 function finishLong(page: Page, bottom: number, s: ExportSettings, u: number, M: number, t: ExportType): void {
   const bh = BRAND_H * u;
   if (s.summary) {
-    const ry = bottom + Math.max(GAP[s.gap] * u, 72 * u);
+    const ry = bottom + sepFor(M, u);
     page.rule = { x: M, y: ry, w: page.w - 2 * M };
     page.summary = { x: M, y: ry + 40 * u, w: page.w - 2 * M, big: false };
     if (s.brand) brandBesideSummary(page, page.w - M, t.titleLine, bh, u);
     page.h = Math.round(ry + summaryBlock(t, u) + M);
   } else if (s.brand) {
     // 没有说明：标识单独一行，靠右
-    const y = bottom + Math.max(GAP[s.gap] * u, 48 * u);
+    const y = bottom + sepFor(M, u);
     page.brand = { x: page.w - M, y, h: bh };
     page.h = Math.round(y + bh + M);
   } else page.h = Math.round(bottom + M);
@@ -243,60 +246,83 @@ function gridPlan(a: readonly number[], s: ExportSettings, W: number): ExportPla
   return { pages: [page], type: t, capLines: lines, shrunk: false };
 }
 
+/** 铺满左右的排法面积不到“撑满高度”那种的这么多，才改用撑满高度的 */
+const FULL_WIDTH_MIN = 0.8;
+
+interface Rows {
+  cells: Cell[];
+  area: number;
+  w: number;
+  h: number;
+}
+
 /**
- * 等高行塞进一个框（box），整块居中。行数在估计值附近试几种，取作品总面积最大的。
- * cap：每行下面标题行的高度（不写标题时 0）；start = 靠左上（PDF 封面，和下面的标题对齐），否则居中
+ * 等高行塞进一个框（box）。行数在估计值附近试几种（2026-11-21 改）：
+ * - 优先让每行正好铺满框宽（左右和下面的说明、细线对齐，调间距不会改变左右的留白），贴着框顶，排不满的高度留在下面；
+ * - 铺满宽度要么放不下、要么面积比“撑满高度”的排法少太多（作品很少时）才撑满高度，整块水平居中。
+ * cap：每行下面标题行的高度（不写标题时 0）；start = 靠左上（PDF 封面，和下面的标题对齐）
  */
 export function fillBox(a: readonly number[], box: Rect, gap: number, cap: number, capTop: number, start = false): Cell[] {
   const n = a.length;
   if (!n || box.w <= 0 || box.h <= 0) return [];
   const S = a.reduce((x, v) => x + v, 0);
   const k0 = clamp(Math.round(Math.sqrt((S * box.h) / box.w)), 1, n);
-  let best: Cell[] = [];
-  let bestArea = -1;
+  let fit: Rows | null = null;
+  let full: Rows | null = null;
   for (let k = Math.max(1, k0 - 2); k <= Math.min(n, k0 + 2); k++) {
     const rows = linearPartition(a, k);
     const sums = rows.map((r) => r.reduce((x, i) => x + a[i], 0));
-    // 用宽 W' 时总高 = W'·Σ(1/sum) − Σ(行内空隙/sum) + 行间空隙 + 标题行：解出正好填满高度的 W'，不超过框宽
+    // 用宽 W' 时总高 = W'·Σ(1/sum) − Σ(行内空隙/sum) + 行间空隙 + 标题行
     let s1 = 0, sg = 0;
     rows.forEach((r, j) => {
       s1 += 1 / sums[j];
       sg += (gap * (r.length - 1)) / sums[j];
     });
     const fixed = gap * (k - 1) + cap * k;
-    const Wfit = Math.min(box.w, (box.h - fixed + sg) / s1);
-    if (!(Wfit > 0)) continue;
-    const cells: Cell[] = [];
-    let y = 0, area = 0, ok = true;
-    rows.forEach((r, j) => {
-      const h = (Wfit - gap * (r.length - 1)) / sums[j];
-      if (h <= 0) ok = false;
-      let x = 0;
-      for (const i of r) {
-        const w = h * a[i];
-        cells.push({ i, x, y, w, h });
-        area += w * h;
-        x += w + gap;
+    const build = (W: number): Rows | null => {
+      const cells: Cell[] = [];
+      let y = 0, area = 0;
+      for (let j = 0; j < rows.length; j++) {
+        const h = (W - gap * (rows[j].length - 1)) / sums[j];
+        if (!(h > 0)) return null;
+        let x = 0;
+        for (const i of rows[j]) {
+          const w = h * a[i];
+          cells.push({ i, x, y, w, h });
+          area += w * h;
+          x += w + gap;
+        }
+        y += h + cap + gap;
       }
-      y += h + cap + gap;
-    });
-    if (!ok || area <= bestArea) continue;
-    bestArea = area;
-    const totalH = y - gap;
-    const ox = start ? box.x : box.x + (box.w - Wfit) / 2, oy = start ? box.y : box.y + Math.max(0, (box.h - totalH) / 2);
-    best = cells.map((c) => {
-      const out: Cell = { i: c.i, x: c.x + ox, y: c.y + oy, w: c.w, h: c.h };
+      return { cells, area, w: W, h: y - gap };
+    };
+    // 撑满高度：解出正好填满框高的 W'（不超过框宽）
+    const c = build(Math.min(box.w, (box.h - fixed + sg) / s1));
+    if (c && (!fit || c.area > fit.area)) fit = c;
+    // 铺满宽度：用框宽时总高放得下
+    if (box.w * s1 - sg + fixed <= box.h + 0.5) {
+      const f = build(box.w);
+      if (f && (!full || f.area > full.area)) full = f;
+    }
+  }
+  const pick = full && (!fit || full.area >= FULL_WIDTH_MIN * fit.area) ? full : fit;
+  if (!pick) return [];
+  const spans = pick === full;
+  const ox = start || spans ? box.x : box.x + (box.w - pick.w) / 2;
+  const oy = start || spans ? box.y : box.y + Math.max(0, (box.h - pick.h) / 2);
+  return pick.cells
+    .map((cl) => {
+      const out: Cell = { i: cl.i, x: cl.x + ox, y: cl.y + oy, w: cl.w, h: cl.h };
       if (cap > 0) out.cap = { x: out.x, y: out.y + out.h + capTop, w: out.w };
       return out;
-    });
-  }
-  return best.sort((p, q) => p.i - q.i);
+    })
+    .sort((p, q) => p.i - q.i);
 }
 
 function collagePlan(a: readonly number[], s: ExportSettings): ExportPlan {
   const { w: W, h: H } = pageSize(s);
   const u = Math.max(W, H) / BASE_WIDTH;
-  const M = MARGIN[s.margin] * u, G = GAP[s.gap] * u;
+  const M = MARGIN[s.margin] * u;
   const t = typeFor(u);
   const page: Page = { w: W, h: H, cells: [] };
   let bottom = H - M;
@@ -306,10 +332,10 @@ function collagePlan(a: readonly number[], s: ExportSettings): ExportPlan {
     page.rule = { x: M, y: top, w: W - 2 * M };
     page.summary = { x: M, y: top + 40 * u, w: W - 2 * M, big: false };
     if (s.brand) brandBesideSummary(page, W - M, t.titleLine, bh, u);
-    bottom = top - Math.max(G, 48 * u);
+    bottom = top - sepFor(M, u);
   } else if (s.brand) {
     page.brand = { x: W - M, y: H - M - bh, h: bh };
-    bottom = H - M - bh - Math.max(G, 32 * u);
+    bottom = H - M - bh - sepFor(M, u);
   }
   const cap = s.captions ? capBlock(u, 2) : 0;
   const box = { x: M, y: M, w: W - 2 * M, h: bottom - M };
