@@ -1,6 +1,6 @@
 // 2026-11-21：导出排版
 import { describe, it, expect } from 'vitest';
-import { brandWidth, dateRange, fillBox, pageSize, pickCover, planExport, MAX_SIDE, type Cell, type ExportSettings, type Page } from './export-layout';
+import { brandWidth, dateRange, fillBox, pageSize, pickCover, planBoardExport, planExport, MAX_SIDE, type Cell, type ExportSettings, type Page } from './export-layout';
 
 const base: ExportSettings = {
   layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, brand: false, size: 1,
@@ -224,5 +224,49 @@ describe('调间距不改变留白', () => {
     const left = Math.min(...p.cells.map((c) => c.x)), right = Math.max(...p.cells.map((c) => c.x + c.w));
     expect(left - p.rule!.x).toBeCloseTo(p.rule!.x + p.rule!.w - right, 1);
     expect(left).toBeGreaterThan(p.rule!.x + 10);
+  });
+});
+
+describe('情绪板导出的排版', () => {
+  const bs = { margin: 1 as const, summary: false, brand: false, size: 1 as const };
+
+  it('横的情绪板：宽是长边，内容等比放进留白里、水平居中', () => {
+    const content = { x: -200, y: 50, w: 1000, h: 500 };
+    const p = planBoardExport(content, bs);
+    expect(p.page.w).toBe(2400);
+    const M = 112 * 1.5;
+    expect(p.ox + content.x * p.k).toBeCloseTo(M, 0);
+    expect(p.ox + (content.x + content.w) * p.k).toBeCloseTo(2400 - M, 0);
+    expect(p.oy + content.y * p.k).toBeCloseTo(M, 0);
+    expect(p.page.h).toBe(Math.round(500 * p.k + 2 * M));
+    expect(p.page.summary).toBeUndefined();
+    expect(p.page.brand).toBeUndefined();
+  });
+
+  it('竖的情绪板：高是长边，水平居中', () => {
+    const content = { x: 0, y: 0, w: 400, h: 1200 };
+    const p = planBoardExport(content, bs);
+    expect(p.page.h).toBe(2400);
+    const left = p.ox, right = p.ox + 400 * p.k;
+    expect(left).toBeCloseTo(p.page.w - right, 0);
+  });
+
+  it('打开说明和标识：放在内容下面的留白里，不压内容', () => {
+    const content = { x: 0, y: 0, w: 1000, h: 600 };
+    const p = planBoardExport(content, { ...bs, summary: true, brand: true });
+    const bottom = p.oy + 600 * p.k;
+    expect(p.page.rule!.y).toBeGreaterThan(bottom);
+    expect(p.page.brand!.y).toBeGreaterThan(bottom);
+    expect(p.page.h).toBeGreaterThan(planBoardExport(content, bs).page.h);
+  });
+
+  it('网点间距落在 [18u, 72u)，粗点是细点的 4 倍', () => {
+    for (const w of [300, 1000, 5000, 40000]) {
+      const p = planBoardExport({ x: 0, y: 0, w, h: w / 2 }, bs);
+      const u = 2400 / 1600;
+      expect(p.dot).toBeGreaterThanOrEqual(18 * u - 1e-6);
+      expect(p.dot).toBeLessThan(72 * u);
+      expect(p.dotMajor).toBeCloseTo(p.dot * 4);
+    }
   });
 });

@@ -106,7 +106,7 @@ function radii(r: string, w: number, h: number): DOMPointInit[] {
   return [a, b, c, d];
 }
 
-function drawShapes(g: CanvasRenderingContext2D, shapes: readonly Shape[], x: number, y: number, w: number, h: number): void {
+export function drawShapes(g: CanvasRenderingContext2D, shapes: readonly Shape[], x: number, y: number, w: number, h: number): void {
   g.save();
   g.beginPath();
   g.rect(x, y, w, h);
@@ -197,21 +197,30 @@ export async function renderPage(
   };
   await Promise.all(Array.from({ length: Math.min(LOADS, page.cells.length) }, worker));
 
+  drawChrome(g, page, t, plan.cover, theme, texts);
+  return canvas;
+}
+
+/** 页面上作品以外的东西：说明上面的细线、说明、Peekit 标识（情绪板导出也用） */
+export function drawChrome(
+  g: CanvasRenderingContext2D, page: Page, t: ExportType, cover: ExportType | undefined, theme: ExportTheme, texts: ExportTexts,
+): void {
+  const F = (weight: number, px: number) => `${weight} ${px}px ${exportFamily()}`;
+  g.textBaseline = 'middle';
   if (page.rule) {
     g.fillStyle = theme.rule;
     g.fillRect(Math.round(page.rule.x), Math.round(page.rule.y), Math.round(page.rule.w), Math.max(1, Math.round(t.rule)));
   }
   if (page.summary) {
-    const st: ExportType = page.summary.big && plan.cover ? plan.cover : t;
+    const st: ExportType = page.summary.big && cover ? cover : t;
     const { x, y, w } = page.summary;
     if (texts.title) line(g, texts.title, x, y, st.titleLine, w, F(600, st.title), theme.ink);
     if (texts.meta) line(g, texts.meta, x, y + st.titleLine + st.metaGap, st.metaLine, w, F(400, st.meta), theme.sub);
   }
   if (page.brand) drawBrand(g, page.brand, theme.sub);
-  return canvas;
 }
 
-async function encode(canvas: HTMLCanvasElement, type: 'image/jpeg' | 'image/png', quality = 0.92): Promise<Uint8Array> {
+export async function encode(canvas: HTMLCanvasElement, type: 'image/jpeg' | 'image/png', quality = 0.92): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, type, quality));
   if (!blob) throw new Error('canvas.toBlob failed');
   return new Uint8Array(await blob.arrayBuffer());
@@ -246,7 +255,7 @@ export async function renderPdf(
   return buildPdf(out, texts.title);
 }
 
-async function loadFonts(): Promise<void> {
+export async function loadFonts(): Promise<void> {
   const family = exportFamily();
   try {
     await Promise.all([document.fonts.load(`600 40px ${family}`), document.fonts.load(`400 20px ${family}`), document.fonts.load(`500 20px ${family}`)]);

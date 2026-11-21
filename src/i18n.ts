@@ -424,12 +424,18 @@ const zh = {
   'export.pages': '{n} 页',
   'export.empty': '没有可导出的作品',
   'export.shrunk': '作品较多，长图缩小到了 {w} px 宽（原本 {full}），可以换成网格或 PDF',
-  'export.crowded': '作品较多，拼图里每幅会很小',
   'export.save': '导出…',
   'export.progress': '正在导出 {done} / {total}',
   'export.saving': '正在保存…',
   'export.cancelled': '已取消导出',
   'export.brand': 'Peekit 标识',
+  'export.mode': '导出什么',
+  'export.mode.works': '作品',
+  'export.mode.board': '情绪板',
+  'export.pickSeries': '选择系列',
+  'export.noBoards': '还没有情绪板',
+  'export.boardEmpty': '这个情绪板里还没有照片',
+  'export.boardMenu': '导出情绪板…',
 };
 
 export type MessageKey = keyof typeof zh;
@@ -835,12 +841,18 @@ const en: Record<MessageKey, string> = {
   'export.pages': '{n} pages',
   'export.empty': 'Nothing to export',
   'export.shrunk': 'Lots of works — the long image was scaled down to {w} px wide (from {full}). Try Grid or PDF.',
-  'export.crowded': 'Lots of works — each one will be small in the collage',
   'export.save': 'Export…',
   'export.progress': 'Exporting {done} / {total}',
   'export.saving': 'Saving…',
   'export.cancelled': 'Export canceled',
   'export.brand': 'Peekit logo',
+  'export.mode': 'What to export',
+  'export.mode.works': 'Works',
+  'export.mode.board': 'Mood board',
+  'export.pickSeries': 'Choose a series',
+  'export.noBoards': 'No mood boards yet',
+  'export.boardEmpty': 'This mood board has no images yet',
+  'export.boardMenu': 'Export mood board…',
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {

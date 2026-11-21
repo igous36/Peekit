@@ -2,71 +2,111 @@
 //
 //   ‹ 预览 │ 导出
 //   ┌──────────── 预览（和导出用同一份坐标摆 DOM，缩小显示）────────────┐ ┌ 设置 ──────────────┐
-//   │                                                                │ │ 内容：全部 / 筛选 / 系列 │
+//   │                                                                │ │ [ 作品 | 情绪板 ]        │
+//   │                                                                │ │ 内容：全部 / 筛选 / 系列▾ │
 //   │                                                                │ │ 版式：长图 网格 拼图 PDF │
 //   │                                                                │ │ 列数 / 比例 / 页面       │
 //   │                                                                │ │ 底色、留白、间距          │
 //   │                                                                │ │ 底部说明（标题、作者）    │
-//   │                                                                │ │ 每幅的标题和日期          │
+//   │                                                                │ │ 每幅的标题和日期、标识    │
 //   │                                                                │ │ 尺寸、格式               │
 //   │                                                                │ │ 1600 × 18 240 px  [导出] │
 //   └────────────────────────────────────────────────────────────────┘ └────────────────────┘
 //
+// 两种模式：
+//   作品    当前预览集的全部作品 / 筛选结果 / 任意一个系列，按版式排
+//   情绪板  选一个情绪板，按画布上的样子原样导出（网点底、照片、标注，export-board.ts），没有版式、间距、每幅标题；
+//           说明和 Peekit 标识默认关，说明里不写幅数；底色、留白、尺寸这些和作品模式分开记
+//
 // 设置（除了说明的标题）记在 localStorage（peekit:export），下次打开还是上次的样子。
 // 预览只在打开、改设置、窗口变大小时重建；真正导出时才按导出尺寸读图、画到画布上（export-render.ts）。
 import type { Work } from '../data/types';
+import type { Board, BoardItem } from '../data/boards';
+import { groupColor } from '../data/boards';
+import { contentBounds } from '../engine/marks';
 import { t, type MessageKey } from '../i18n';
 import { displayTitle } from '../data/series-ops';
-import { el, svgIcon, ICON_PREV } from './dom';
+import { el, svgIcon, ICON_PREV, ICON_NEXT } from './dom';
 import { fillArt } from './art';
 import { markSvg, PEEKIT } from './wordmark';
+import { paintMarksStatic } from './board/board-marks';
 import {
-  brandWidth, dateRange, pageSize, pickCover, planExport,
-  type CollageRatio, type ExportLayout, type ExportPlan, type ExportSettings, type ExportSize, type PdfPageSize, type Spacing,
+  brandWidth, dateRange, pageSize, pickCover, planBoardExport, planExport,
+  type BoardExportSettings, type BoardPlan, type CollageRatio, type ExportLayout, type ExportPlan, type ExportSettings,
+  type ExportSize, type Page, type PdfPageSize, type Spacing,
 } from '../engine/export-layout';
 import {
-  EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type RenderControl,
+  EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type ExportTheme, type RenderControl,
 } from './export-render';
+import { renderBoard } from './export-board';
 
 export type ExportScope = 'all' | 'filtered' | 'series';
+export type ExportMode = 'works' | 'board';
+
+export interface ExportSeries {
+  id: string;
+  name: string;
+  works: readonly Work[];
+}
 
 export interface ExportHost {
   /** 当前预览集的全部作品 */
   all(): readonly Work[];
   /** 按星 / 颜色筛选后的作品；没在筛选时 null */
   filtered(): readonly Work[] | null;
+  /** 当前预览集里有作品的系列（按系列顺序） */
+  seriesList(): readonly ExportSeries[];
   /** 当前这幅所在的系列 */
-  series(): { name: string; works: readonly Work[] } | null;
+  currentSeries(): string | null;
   setName(): string;
-  /** 预览用的缩略图地址：有就直接给，没有给一个生成它的 promise；示例数据 null */
+  /** 预览用的缩略图地址：有就直接给，示例数据 null，还没有 undefined（再用 makeThumb 生成） */
   thumb(w: Work): string | null | undefined;
   /** 还没有缩略图的作品生成一张（预览排队调用，最多同时 3 个） */
   makeThumb(w: Work): Promise<string | null>;
   /** 导出时读图 */
   images(works: readonly Work[]): ExportImages;
+  /** 全部情绪板（最近用过的在前） */
+  boards(): readonly Board[];
+  /** 情绪板里一张照片的缩略图（同 thumb / makeThumb） */
+  boardThumb(it: BoardItem): string | null | undefined;
+  makeBoardThumb(it: BoardItem): Promise<string | null>;
+  /** 导出情绪板时读图（下标是 board.items 的下标） */
+  boardImages(b: Board): ExportImages;
   save(bytes: Uint8Array, fileName: string): Promise<string | null>;
   toast(msg: string, sticky?: boolean): void;
   close(): void;
+}
+
+/** 两种模式共用的几项（情绪板模式另记一份） */
+interface Shared {
+  bg: ExportBg;
+  margin: Spacing;
+  summary: boolean;
+  brand: boolean;
+  size: ExportSize;
+  format: 'jpg' | 'png';
 }
 
 export interface Saved extends ExportSettings {
   bg: ExportBg;
   format: 'jpg' | 'png';
   author: string;
+  /** 情绪板模式的设置 */
+  board: Shared;
 }
 
 const KEY = 'peekit:export';
+const BOARD_DEFAULTS: Shared = { bg: 'gray', margin: 1, summary: false, brand: false, size: 1, format: 'jpg' };
 const DEFAULTS: Saved = {
   layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, brand: true, size: 1,
-  bg: 'white', format: 'jpg', author: '',
+  bg: 'white', format: 'jpg', author: '', board: { ...BOARD_DEFAULTS },
 };
 const LAYOUTS: ExportLayout[] = ['long', 'grid', 'collage', 'pdf'];
 const RATIOS: CollageRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 const PAGES: PdfPageSize[] = ['a4-landscape', 'a4-portrait', 'wide'];
 const BGS: ExportBg[] = ['white', 'paper', 'gray', 'ink'];
 const SIZES: ExportSize[] = [1, 1.5, 2];
-/** 拼图里作品多于这个数，提示会很小 */
-const CROWDED = 30;
+const SPACINGS: Spacing[] = [0, 1, 2];
 /** 预览区四周留的空（px） */
 const PAD = 40;
 
@@ -78,28 +118,38 @@ const LAYOUT_ICONS: Record<ExportLayout, string[]> = {
   pdf: ['M8 3h7l4 4v14H8z', 'M15 3v4h4', 'M5 6v15h11'],
 };
 
+const pick = <T>(v: unknown, ok: readonly T[], d: T): T => (ok.includes(v as T) ? (v as T) : d);
+const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d);
+
+function loadShared(raw: Partial<Shared> | undefined, d: Shared): Shared {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  return {
+    bg: pick(r.bg, BGS, d.bg),
+    margin: pick(r.margin, SPACINGS, d.margin),
+    summary: bool(r.summary, d.summary),
+    brand: bool(r.brand, d.brand),
+    size: pick(r.size, SIZES, d.size),
+    format: pick(r.format, ['jpg', 'png'] as const, d.format),
+  };
+}
+
 function load(): Saved {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<Saved> | null;
-    if (!raw || typeof raw !== 'object') return { ...DEFAULTS };
-    const pick = <T>(v: unknown, ok: readonly T[], d: T): T => (ok.includes(v as T) ? (v as T) : d);
+    if (!raw || typeof raw !== 'object') return { ...DEFAULTS, board: { ...BOARD_DEFAULTS } };
     return {
+      ...loadShared(raw, DEFAULTS),
       layout: pick(raw.layout, LAYOUTS, DEFAULTS.layout),
       columns: pick(raw.columns, [2, 3, 4], DEFAULTS.columns),
       ratio: pick(raw.ratio, RATIOS, DEFAULTS.ratio),
       page: pick(raw.page, PAGES, DEFAULTS.page),
-      margin: pick(raw.margin, [0, 1, 2] as Spacing[], DEFAULTS.margin),
-      gap: pick(raw.gap, [0, 1, 2] as Spacing[], DEFAULTS.gap),
-      captions: typeof raw.captions === 'boolean' ? raw.captions : DEFAULTS.captions,
-      summary: typeof raw.summary === 'boolean' ? raw.summary : DEFAULTS.summary,
-      brand: typeof raw.brand === 'boolean' ? raw.brand : DEFAULTS.brand,
-      size: pick(raw.size, SIZES, DEFAULTS.size),
-      bg: pick(raw.bg, BGS, DEFAULTS.bg),
-      format: pick(raw.format, ['jpg', 'png'] as const, DEFAULTS.format),
+      gap: pick(raw.gap, SPACINGS, DEFAULTS.gap),
+      captions: bool(raw.captions, DEFAULTS.captions),
       author: typeof raw.author === 'string' ? raw.author.slice(0, 80) : '',
+      board: loadShared(raw.board, BOARD_DEFAULTS),
     };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, board: { ...BOARD_DEFAULTS } };
   }
 }
 
@@ -107,6 +157,10 @@ function load(): Saved {
 const safeName = (s: string): string => s.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').trim().slice(0, 120) || 'Peekit';
 
 const fmtNum = (n: number): string => n.toLocaleString();
+
+/** 网点颜色（预览用，和 export-board.ts 一致） */
+const dotCss = (bg: ExportBg): [string, string] =>
+  bg === 'ink' ? ['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.22)'] : ['rgba(22,22,22,0.17)', 'rgba(22,22,22,0.28)'];
 
 export class ExportView {
   readonly root: HTMLElement;
@@ -119,9 +173,17 @@ export class ExportView {
   private saveLabel: HTMLElement;
   private titleInput: HTMLInputElement;
   private authorInput: HTMLInputElement;
+  private seriesListEl: HTMLElement;
+  private boardListEl: HTMLElement;
   private syncers: (() => void)[] = [];
   private s: Saved = load();
+  private mode: ExportMode = 'works';
   private scope: ExportScope = 'all';
+  /** 选的系列、情绪板 */
+  private seriesId: string | null = null;
+  private boardId: string | null = null;
+  /** 系列列表展开着 */
+  private seriesOpen = false;
   /** 说明的标题：用户改过就不再跟着范围变 */
   private title = '';
   private titleEdited = false;
@@ -159,6 +221,8 @@ export class ExportView {
       this.persist();
       this.schedule();
     });
+    this.seriesListEl = el('div', { class: 'export-pick-list', role: 'radiogroup', 'data-i18n-aria': 'export.pickSeries', 'aria-label': t('export.pickSeries') });
+    this.boardListEl = el('div', { class: 'export-scopes', role: 'radiogroup', 'data-i18n-aria': 'export.mode.board', 'aria-label': t('export.mode.board') });
 
     this.info = el('p', { class: 'export-info' });
     this.hint = el('p', { class: 'export-hint' });
@@ -178,7 +242,7 @@ export class ExportView {
       this.panel,
     ]);
 
-    // 捕获阶段：开着时 Esc 回到预览（在输入框里按 Esc 先离开输入框）
+    // 捕获阶段：开着时 Esc 回到预览（在输入框里按 Esc 先离开输入框，系列列表展开着先收起）
     document.addEventListener('keydown', (e) => {
       if (!this.open || e.defaultPrevented || e.key !== 'Escape') return;
       const tg = e.target as HTMLElement | null;
@@ -186,7 +250,10 @@ export class ExportView {
       e.preventDefault();
       e.stopPropagation();
       if (tg instanceof HTMLInputElement) tg.blur();
-      else this.host.close();
+      else if (this.seriesOpen) {
+        this.seriesOpen = false;
+        this.sync();
+      } else this.host.close();
     }, true);
     let resizeTimer = 0;
     window.addEventListener('resize', () => {
@@ -200,9 +267,20 @@ export class ExportView {
     return this.open;
   }
 
-  show(): void {
+  /** 打开。board：直接进情绪板模式、选中这个情绪板 */
+  show(opts: { board?: string } = {}): void {
     this.returnFocus = document.activeElement as HTMLElement | null;
+    const boards = this.host.boards();
+    if (opts.board && boards.some((b) => b.id === opts.board)) {
+      this.mode = 'board';
+      this.boardId = opts.board;
+    } else {
+      this.mode = 'works';
+      if (!this.boardId || !boards.some((b) => b.id === this.boardId)) this.boardId = boards[0]?.id ?? null;
+    }
     this.scope = this.host.filtered() ? 'filtered' : 'all';
+    this.seriesId = this.host.currentSeries() ?? this.host.seriesList()[0]?.id ?? null;
+    this.seriesOpen = false;
     this.titleEdited = false;
     this.title = this.defaultTitle();
     this.titleInput.value = this.title;
@@ -230,29 +308,47 @@ export class ExportView {
     if (back && document.contains(back)) back.focus({ preventScroll: true });
   }
 
-  /** 作品库变了（换预览集、筛选、补出缩略图）：开着就重建预览 */
+  /** 作品库变了（换预览集、筛选、补出缩略图、换了语言）：开着就重建预览 */
   refresh(): void {
     if (!this.open) return;
     if (this.scope === 'filtered' && !this.host.filtered()) this.scope = 'all';
-    if (this.scope === 'series' && !this.host.series()) this.scope = 'all';
-    if (!this.titleEdited) {
-      this.title = this.defaultTitle();
-      this.titleInput.value = this.title;
-    }
+    if (this.scope === 'series' && !this.currentSeries()) this.scope = 'all';
+    this.retitle();
     this.sync();
     this.renderPreview();
   }
 
   // ───────────── 设置 ─────────────
 
+  /** 当前模式下的共用设置（底色、留白、说明、标识、尺寸、格式） */
+  private get st(): Shared {
+    return this.mode === 'board' ? this.s.board : this.s;
+  }
+
+  private currentSeries(): ExportSeries | null {
+    return this.host.seriesList().find((x) => x.id === this.seriesId) ?? null;
+  }
+
+  private board(): Board | null {
+    return this.host.boards().find((b) => b.id === this.boardId) ?? null;
+  }
+
   private works(): readonly Work[] {
     if (this.scope === 'filtered') return this.host.filtered() ?? this.host.all();
-    if (this.scope === 'series') return this.host.series()?.works ?? this.host.all();
+    if (this.scope === 'series') return this.currentSeries()?.works ?? this.host.all();
     return this.host.all();
   }
 
   private defaultTitle(): string {
-    return this.scope === 'series' ? this.host.series()?.name ?? this.host.setName() : this.host.setName();
+    if (this.mode === 'board') return this.board()?.name ?? '';
+    return this.scope === 'series' ? this.currentSeries()?.name ?? this.host.setName() : this.host.setName();
+  }
+
+  /** 换了内容：标题没被改过就跟着换 */
+  private retitle(): void {
+    if (this.titleEdited) return;
+    this.title = this.defaultTitle();
+    this.titleInput.value = this.title;
   }
 
   private persist(): void {
@@ -266,6 +362,14 @@ export class ExportView {
   /** 改了设置：记下来、刷新控件和预览 */
   private set<K extends keyof Saved>(k: K, v: Saved[K]): void {
     this.s[k] = v;
+    this.persist();
+    this.sync();
+    this.renderPreview();
+  }
+
+  /** 改当前模式下的共用设置 */
+  private setShared<K extends keyof Shared>(k: K, v: Shared[K]): void {
+    this.st[k] = v;
     this.persist();
     this.sync();
     this.renderPreview();
@@ -316,7 +420,7 @@ export class ExportView {
     return r;
   }
 
-  private toggle(label: () => string, get: () => boolean, set: (v: boolean) => void): HTMLElement {
+  private toggle(label: () => string, get: () => boolean, set: (v: boolean) => void, visible?: () => boolean): HTMLElement {
     const text = el('span', { class: 'export-label' });
     const knob = el('span', { class: 'toggle', 'aria-hidden': 'true' }, [el('span', { class: 'toggle-knob' })]);
     const b = el('button', { type: 'button', role: 'switch', class: 'export-switch' }, [text, knob]);
@@ -325,39 +429,112 @@ export class ExportView {
       text.textContent = label();
       b.setAttribute('aria-checked', String(get()));
       knob.classList.toggle('is-on', get());
+      if (visible) b.hidden = !visible();
     });
     return b;
   }
 
+  /** 只在某个模式下显示的一块 */
+  private only(mode: ExportMode, node: HTMLElement): HTMLElement {
+    this.syncers.push(() => (node.hidden = this.mode !== mode));
+    return node;
+  }
+
+  private setMode(m: ExportMode): void {
+    if (m === this.mode) return;
+    this.mode = m;
+    this.seriesOpen = false;
+    this.titleEdited = false;
+    this.retitle();
+    this.sync();
+    this.renderPreview();
+    this.preview.scrollTop = 0;
+  }
+
   private controls(): HTMLElement[] {
     const s = this.s;
-    // 内容
+    const works = () => this.mode === 'works';
+
+    // ── 内容（作品）：全部 / 筛选结果 / 系列 ▾ ──
     const scopeRows = (['all', 'filtered', 'series'] as ExportScope[]).map((k) => {
       const name = el('span', { class: 'export-scope-name' });
       const count = el('span', { class: 'export-scope-count' });
-      const b = el('button', { type: 'button', role: 'radio', class: 'export-scope' }, [name, count]);
+      const chev = k === 'series' ? svgIcon(ICON_NEXT, 14) : null;
+      if (chev) chev.classList.add('export-scope-chev');
+      const b = el('button', { type: 'button', role: 'radio', class: 'export-scope' }, chev ? [name, count, chev] : [name, count]);
+      if (k === 'series') b.setAttribute('aria-haspopup', 'true');
       b.addEventListener('click', () => {
+        // 系列：第一次点选中当前系列，再点（或已经选中时点）展开系列列表
+        if (k === 'series') this.seriesOpen = this.scope === 'series' ? !this.seriesOpen : false;
+        else this.seriesOpen = false;
         this.scope = k;
-        if (!this.titleEdited) {
-          this.title = this.defaultTitle();
-          this.titleInput.value = this.title;
-        }
+        this.retitle();
         this.sync();
         this.renderPreview();
       });
       this.syncers.push(() => {
-        const f = this.host.filtered(), sr = this.host.series();
-        const works = k === 'all' ? this.host.all() : k === 'filtered' ? f : sr?.works;
-        b.hidden = !works;
+        const sr = this.currentSeries();
+        const ws = k === 'all' ? this.host.all() : k === 'filtered' ? this.host.filtered() : sr?.works;
+        b.hidden = !ws;
         name.textContent = k === 'all' ? t('export.scopeAll') : k === 'filtered' ? t('export.scopeFiltered') : t('export.scopeSeries', { name: sr?.name ?? '' });
-        count.textContent = works ? t('export.count', { n: works.length }) : '';
+        count.textContent = ws ? t('export.count', { n: ws.length }) : '';
         b.setAttribute('aria-checked', String(this.scope === k));
+        if (k === 'series') {
+          b.setAttribute('aria-expanded', String(this.seriesOpen));
+          b.classList.toggle('is-open', this.seriesOpen);
+        }
       });
       return b;
     });
-    const scope = el('div', { class: 'export-scopes', role: 'radiogroup', 'data-i18n-aria': 'export.scope', 'aria-label': t('export.scope') }, scopeRows);
+    // 系列列表：展开时列出当前预览集里的全部系列
+    this.syncers.push(() => {
+      this.seriesListEl.hidden = !(works() && this.scope === 'series' && this.seriesOpen);
+      if (this.seriesListEl.hidden) return;
+      const list = this.host.seriesList();
+      this.seriesListEl.replaceChildren(...list.map((sr) => {
+        const b = el('button', { type: 'button', role: 'radio', class: 'export-pick', 'aria-checked': String(sr.id === this.seriesId) }, [
+          el('span', { class: 'export-scope-name' }, [sr.name]),
+          el('span', { class: 'export-scope-count' }, [t('export.count', { n: sr.works.length })]),
+        ]);
+        b.addEventListener('click', () => {
+          this.seriesId = sr.id;
+          this.seriesOpen = false;
+          this.retitle();
+          this.sync();
+          this.renderPreview();
+        });
+        return b;
+      }));
+    });
+    const scope = el('div', { class: 'export-scopes', role: 'radiogroup', 'data-i18n-aria': 'export.scope', 'aria-label': t('export.scope') }, [
+      ...scopeRows, this.seriesListEl,
+    ]);
 
-    // 版式：四张小卡片
+    // ── 内容（情绪板）：情绪板列表 ──
+    this.syncers.push(() => {
+      if (this.mode !== 'board') return;
+      const list = this.host.boards();
+      if (!list.length) {
+        this.boardListEl.replaceChildren(el('p', { class: 'export-empty' }, [t('export.noBoards')]));
+        return;
+      }
+      this.boardListEl.replaceChildren(...list.map((b) => {
+        const btn = el('button', { type: 'button', role: 'radio', class: 'export-scope', 'aria-checked': String(b.id === this.boardId) }, [
+          el('span', { class: 'export-scope-name' }, [b.name]),
+          el('span', { class: 'export-scope-count' }, [t('board.count', { n: b.items.length })]),
+        ]);
+        btn.addEventListener('click', () => {
+          this.boardId = b.id;
+          this.titleEdited = false;
+          this.retitle();
+          this.sync();
+          this.renderPreview();
+        });
+        return btn;
+      }));
+    });
+
+    // ── 版式：四张小卡片 ──
     const cards = LAYOUTS.map((k) => {
       const b = el('button', { type: 'button', role: 'radio', class: 'export-layout' }, [
         svgIcon(LAYOUT_ICONS[k], 22), el('span', { 'data-i18n': `export.layout.${k}` }, [t(`export.layout.${k}`)]),
@@ -368,58 +545,65 @@ export class ExportView {
     });
     const layouts = el('div', { class: 'export-layouts', role: 'radiogroup', 'data-i18n-aria': 'export.layout', 'aria-label': t('export.layout') }, cards);
 
-    // 底色：四个圆点
+    // ── 底色：四个圆点 ──
     const dots = BGS.map((k) => {
       const sw = el('span', { class: 'export-bg-fill' });
       sw.style.background = EXPORT_THEMES[k].bg;
       const b = el('button', { type: 'button', role: 'radio', class: 'export-bg', 'data-i18n-aria': `export.bg.${k}`, 'aria-label': t(`export.bg.${k}`), 'data-i18n-title': `export.bg.${k}`, title: t(`export.bg.${k}`) }, [sw]);
-      b.addEventListener('click', () => this.set('bg', k));
-      this.syncers.push(() => b.setAttribute('aria-checked', String(s.bg === k)));
+      b.addEventListener('click', () => this.setShared('bg', k));
+      this.syncers.push(() => b.setAttribute('aria-checked', String(this.st.bg === k)));
       return b;
     });
     const bgs = el('div', { class: 'export-bgs', role: 'radiogroup', 'data-i18n-aria': 'export.bg', 'aria-label': t('export.bg') }, dots);
 
     const spacing = [[0, 'export.small'], [1, 'export.medium'], [2, 'export.large']] as const;
-    const isPdf = () => s.layout === 'pdf';
+    const isPdf = () => works() && s.layout === 'pdf';
     const summaryFields = el('div', { class: 'export-fields' }, [
       el('label', { class: 'export-field' }, [el('span', { 'data-i18n': 'export.summaryTitle' }, [t('export.summaryTitle')]), this.titleInput]),
       el('label', { class: 'export-field' }, [el('span', { 'data-i18n': 'export.author' }, [t('export.author')]), this.authorInput]),
     ]);
-    this.syncers.push(() => (summaryFields.hidden = !s.summary));
+    this.syncers.push(() => (summaryFields.hidden = !this.st.summary));
 
     return [
+      this.seg('export.mode', [['works', 'export.mode.works'], ['board', 'export.mode.board']] as const, () => this.mode, (m) => this.setMode(m), 'is-mode'),
       el('h2', { class: 'export-h', 'data-i18n': 'export.scope' }, [t('export.scope')]),
-      scope,
-      el('h2', { class: 'export-h', 'data-i18n': 'export.layout' }, [t('export.layout')]),
-      layouts,
-      this.row('export.columns', this.seg('export.columns', [[2, '2'], [3, '3'], [4, '4']], () => s.columns, (v) => this.set('columns', v)), () => s.layout === 'grid'),
-      this.row('export.ratio', this.seg('export.ratio', RATIOS.map((r) => [r, r] as const), () => s.ratio, (v) => this.set('ratio', v), 'is-wide'), () => s.layout === 'collage'),
+      this.only('works', scope),
+      this.only('board', this.boardListEl),
+      this.only('works', el('h2', { class: 'export-h', 'data-i18n': 'export.layout' }, [t('export.layout')])),
+      this.only('works', layouts),
+      this.row('export.columns', this.seg('export.columns', [[2, '2'], [3, '3'], [4, '4']], () => s.columns, (v) => this.set('columns', v)), () => works() && s.layout === 'grid'),
+      this.row('export.ratio', this.seg('export.ratio', RATIOS.map((r) => [r, r] as const), () => s.ratio, (v) => this.set('ratio', v), 'is-wide'), () => works() && s.layout === 'collage'),
       this.row('export.page', this.seg('export.page', PAGES.map((p) => [p, `export.page.${p}`] as const), () => s.page, (v) => this.set('page', v)), isPdf),
       el('h2', { class: 'export-h', 'data-i18n': 'export.look' }, [t('export.look')]),
       this.row('export.bg', bgs),
-      this.row('export.margin', this.seg('export.margin', spacing, () => s.margin, (v) => this.set('margin', v))),
-      this.row('export.gap', this.seg('export.gap', spacing, () => s.gap, (v) => this.set('gap', v)), () => !isPdf()),
+      this.row('export.margin', this.seg('export.margin', spacing, () => this.st.margin, (v) => this.setShared('margin', v))),
+      this.row('export.gap', this.seg('export.gap', spacing, () => s.gap, (v) => this.set('gap', v)), () => works() && !isPdf()),
       el('h2', { class: 'export-h', 'data-i18n': 'export.text' }, [t('export.text')]),
-      this.toggle(() => t(isPdf() ? 'export.cover' : 'export.summary'), () => s.summary, (v) => this.set('summary', v)),
+      this.toggle(() => t(isPdf() ? 'export.cover' : 'export.summary'), () => this.st.summary, (v) => this.setShared('summary', v)),
       summaryFields,
-      this.toggle(() => t('export.captions'), () => s.captions, (v) => this.set('captions', v)),
-      this.toggle(() => t('export.brand'), () => s.brand, (v) => this.set('brand', v)),
+      this.toggle(() => t('export.captions'), () => s.captions, (v) => this.set('captions', v), works),
+      this.toggle(() => t('export.brand'), () => this.st.brand, (v) => this.setShared('brand', v)),
       el('h2', { class: 'export-h', 'data-i18n': 'export.output' }, [t('export.output')]),
-      this.row('export.size', this.seg('export.size', [[1, 'export.size.1'], [1.5, 'export.size.15'], [2, 'export.size.2']] as const, () => s.size, (v) => this.set('size', v))),
-      this.row('export.format', this.seg('export.format', [['jpg', 'JPG'], ['png', 'PNG']] as const, () => s.format, (v) => this.set('format', v)), () => !isPdf()),
+      this.row('export.size', this.seg('export.size', [[1, 'export.size.1'], [1.5, 'export.size.15'], [2, 'export.size.2']] as const, () => this.st.size, (v) => this.setShared('size', v))),
+      this.row('export.format', this.seg('export.format', [['jpg', 'JPG'], ['png', 'PNG']] as const, () => this.st.format, (v) => this.setShared('format', v)), () => !isPdf()),
     ];
   }
 
-  // ───────────── 预览 ─────────────
+  // ───────────── 排版 ─────────────
 
   private plan(works: readonly Work[], s: Saved = this.s): ExportPlan {
     const aspects = works.map((w) => (w.width && w.height ? w.width / w.height : 0.8));
     return planExport(aspects, s, s.layout === 'pdf' ? pickCover(works.map((w) => w.rating)) : []);
   }
 
+  private boardPlan(b: Board, st: Shared = this.s.board): BoardPlan {
+    const settings: BoardExportSettings = { margin: st.margin, summary: st.summary, brand: st.brand, size: st.size };
+    return planBoardExport(contentBounds(b.items, b.marks), settings);
+  }
+
   /** 当前设置（自检用） */
   get settings(): Saved {
-    return { ...this.s };
+    return { ...this.s, board: { ...this.s.board } };
   }
 
   /** 按设置 s 把 works 画成文件（PDF 或图片）的字节 */
@@ -431,6 +615,11 @@ export class ExportView {
     return s.layout === 'pdf' ? renderPdf(plan, s.page, theme, texts, images, ctl) : renderImage(plan, theme, texts, images, s.format, ctl);
   }
 
+  /** 把一个情绪板画成图片的字节 */
+  renderBoardBytes(b: Board, st: Shared = this.s.board, ctl: RenderControl = {}): Promise<Uint8Array> {
+    return renderBoard(b, this.boardPlan(b, st), st.bg, EXPORT_THEMES[st.bg], this.boardTexts(b), this.host.boardImages(b), st.format, ctl);
+  }
+
   private texts(works: readonly Work[]): ExportTexts {
     const meta = [this.s.author.trim(), dateRange(works.map((w) => w.date)), t('export.count', { n: works.length })].filter(Boolean).join('  ·  ');
     return {
@@ -440,40 +629,74 @@ export class ExportView {
     };
   }
 
+  /** 情绪板的说明：标题和作者，不写幅数 */
+  private boardTexts(b: Board): ExportTexts {
+    return { title: this.title.trim() || b.name, meta: this.s.author.trim(), captions: [] };
+  }
+
+  // ───────────── 预览 ─────────────
+
   private renderPreview(): void {
     if (!this.open) return;
     const gen = ++this.gen;
     this.queue.length = 0;
+    const pw = Math.max(200, this.preview.clientWidth - PAD * 2);
+    const ph = Math.max(200, this.preview.clientHeight - PAD * 2 - 24);
+    this.stage.classList.toggle('is-pages', this.mode === 'works' && this.s.layout === 'pdf');
+    if (this.mode === 'board') {
+      const b = this.board();
+      if (!b || !b.items.length) {
+        this.stage.replaceChildren();
+        this.updateInfo(null, 0);
+        return;
+      }
+      const plan = this.boardPlan(b);
+      const scale = Math.min(pw / plan.page.w, ph / plan.page.h);
+      this.stage.replaceChildren(this.boardSheet(b, plan, scale, gen));
+      this.updateInfo(null, b.items.length, plan.page);
+      return;
+    }
     const works = this.works();
     const plan = this.plan(works);
     const texts = this.texts(works);
     const theme = EXPORT_THEMES[this.s.bg];
-    const pw = Math.max(200, this.preview.clientWidth - PAD * 2);
-    const ph = Math.max(200, this.preview.clientHeight - PAD * 2 - 24);
     const first = plan.pages[0];
     // 缩放：长图、网格按宽；拼图整页放进预览区；PDF 每页按宽（最宽 760）
     const scale = this.s.layout === 'collage'
       ? Math.min(pw / first.w, ph / first.h)
       : Math.min(this.s.layout === 'pdf' ? 760 : 680, pw) / first.w;
-    const sheets = plan.pages.map((p) => this.sheet(p, plan, texts, theme.bg, theme.ink, theme.sub, theme.rule, works, scale, gen));
+    const sheets = plan.pages.map((p) => {
+      const sheet = this.sheetBase(p, theme, scale);
+      this.worksInto(sheet, p, plan, texts, theme, works, gen);
+      this.chromeInto(sheet, p, plan.type, plan.cover, texts, theme);
+      return this.wrap(sheet, p, scale);
+    });
     this.stage.replaceChildren(...sheets);
-    this.stage.classList.toggle('is-pages', this.s.layout === 'pdf');
     this.updateInfo(plan, works.length);
   }
 
-  private sheet(
-    p: ExportPlan['pages'][number], plan: ExportPlan, texts: ExportTexts,
-    bg: string, ink: string, sub: string, rule: string, works: readonly Work[], scale: number, gen: number,
-  ): HTMLElement {
+  private sheetBase(p: Page, theme: ExportTheme, scale: number): HTMLElement {
     const sheet = el('div', { class: 'export-sheet' });
-    Object.assign(sheet.style, { width: `${p.w}px`, height: `${p.h}px`, transform: `scale(${scale})`, background: bg, color: ink });
+    Object.assign(sheet.style, { width: `${p.w}px`, height: `${p.h}px`, transform: `scale(${scale})`, background: theme.bg, color: theme.ink });
+    return sheet;
+  }
+
+  private wrap(sheet: HTMLElement, p: Page, scale: number): HTMLElement {
+    const wrap = el('div', { class: 'export-sheet-wrap' }, [sheet]);
+    Object.assign(wrap.style, { width: `${Math.round(p.w * scale)}px`, height: `${Math.round(p.h * scale)}px` });
+    return wrap;
+  }
+
+  private worksInto(
+    sheet: HTMLElement, p: Page, plan: ExportPlan, texts: ExportTexts, theme: ExportTheme, works: readonly Work[], gen: number,
+  ): void {
     const ty = plan.type;
     for (const c of p.cells) {
       const w = works[c.i];
       const canvas = el('span', { class: 'art-canvas' });
       const cell = el('div', { class: 'export-cell' }, [canvas]);
       Object.assign(cell.style, { left: `${c.x}px`, top: `${c.y}px`, width: `${c.w}px`, height: `${c.h}px` });
-      this.fillCell(canvas, w, gen);
+      this.fillThumb(canvas, w, this.host.thumb(w), () => this.host.makeThumb(w), gen);
       sheet.append(cell);
       if (c.cap) {
         const cap = texts.captions[c.i];
@@ -485,23 +708,29 @@ export class ExportView {
           left: `${c.cap.x}px`, top: `${c.cap.y}px`, width: `${c.cap.w}px`, height: `${ty.capLine * plan.capLines}px`,
           fontSize: `${ty.caption}px`, lineHeight: `${ty.capLine}px`, columnGap: `${ty.caption * 0.7}px`,
         });
-        (line.lastElementChild as HTMLElement).style.color = sub;
+        (line.lastElementChild as HTMLElement).style.color = theme.sub;
         sheet.append(line);
       }
     }
+  }
+
+  /** 细线、说明、Peekit 标识 */
+  private chromeInto(
+    sheet: HTMLElement, p: Page, ty: ExportPlan['type'], cover: ExportPlan['cover'], texts: ExportTexts, theme: ExportTheme,
+  ): void {
     if (p.rule) {
       const r = el('div', { class: 'export-rule' });
-      Object.assign(r.style, { left: `${p.rule.x}px`, top: `${p.rule.y}px`, width: `${p.rule.w}px`, height: `${Math.max(1, ty.rule)}px`, background: rule });
+      Object.assign(r.style, { left: `${p.rule.x}px`, top: `${p.rule.y}px`, width: `${p.rule.w}px`, height: `${Math.max(1, ty.rule)}px`, background: theme.rule });
       sheet.append(r);
     }
     if (p.summary) {
-      const st = p.summary.big && plan.cover ? plan.cover : ty;
+      const st = p.summary.big && cover ? cover : ty;
       const title = el('div', { class: 'export-sum-title' }, [texts.title]);
       Object.assign(title.style, { left: `${p.summary.x}px`, top: `${p.summary.y}px`, width: `${p.summary.w}px`, fontSize: `${st.title}px`, lineHeight: `${st.titleLine}px` });
       const meta = el('div', { class: 'export-sum-meta' }, [texts.meta]);
       Object.assign(meta.style, {
         left: `${p.summary.x}px`, top: `${p.summary.y + st.titleLine + st.metaGap}px`, width: `${p.summary.w}px`,
-        fontSize: `${st.meta}px`, lineHeight: `${st.metaLine}px`, color: sub,
+        fontSize: `${st.meta}px`, lineHeight: `${st.metaLine}px`, color: theme.sub,
       });
       sheet.append(title, meta);
     }
@@ -509,16 +738,46 @@ export class ExportView {
       // Peekit 标识：手写字标（灰色）
       const b = p.brand;
       const brand = el('div', { class: 'export-brand', 'aria-hidden': 'true' }, [markSvg(PEEKIT, b.h)]);
-      Object.assign(brand.style, { left: `${b.x - brandWidth(b.h)}px`, top: `${b.y}px`, height: `${b.h}px`, color: sub });
+      Object.assign(brand.style, { left: `${b.x - brandWidth(b.h)}px`, top: `${b.y}px`, height: `${b.h}px`, color: theme.sub });
       sheet.append(brand);
     }
-    const wrap = el('div', { class: 'export-sheet-wrap' }, [sheet]);
-    Object.assign(wrap.style, { width: `${Math.round(p.w * scale)}px`, height: `${Math.round(p.h * scale)}px` });
-    return wrap;
   }
 
-  private fillCell(canvas: HTMLElement, w: Work, gen: number): void {
-    const src = this.host.thumb(w);
+  /** 情绪板的预览：网点底 + 照片（用画布上同一套样式）+ 标注 */
+  private boardSheet(b: Board, plan: BoardPlan, scale: number, gen: number): HTMLElement {
+    const st = this.s.board;
+    const theme = EXPORT_THEMES[st.bg];
+    const p = plan.page;
+    const sheet = this.sheetBase(p, theme, scale);
+    const [fine, major] = dotCss(st.bg);
+    const u = plan.type.caption / 20;
+    sheet.style.backgroundImage = [
+      `radial-gradient(circle, ${major} 0 ${1.4 * u}px, transparent ${1.4 * u + 0.6}px)`,
+      `radial-gradient(circle, ${fine} 0 ${1.1 * u}px, transparent ${1.1 * u + 0.6}px)`,
+    ].join(', ');
+    sheet.style.backgroundSize = `${plan.dotMajor}px ${plan.dotMajor}px, ${plan.dot}px ${plan.dot}px`;
+    sheet.style.backgroundPosition = `${plan.ox - plan.dotMajor / 2}px ${plan.oy - plan.dotMajor / 2}px, ${plan.ox - plan.dot / 2}px ${plan.oy - plan.dot / 2}px`;
+    // 画布坐标的一层：照片、标注按画布上的位置摆，整体缩放；描边粗细在导出图上是 1.5u（--bz = k / u）
+    const world = el('div', { class: 'export-board-world' });
+    Object.assign(world.style, { transform: `translate(${plan.ox}px, ${plan.oy}px) scale(${plan.k})` });
+    world.style.setProperty('--bz', String(plan.k / u));
+    for (const it of b.items) {
+      const canvas = el('span', { class: 'art-canvas' });
+      const node = el('div', { class: 'board-item export-board-item' }, [canvas]);
+      Object.assign(node.style, { left: `${it.x}px`, top: `${it.y}px`, width: `${it.w}px`, height: `${it.h}px` });
+      node.style.setProperty('--gc', groupColor(b, it.group));
+      const pseudo: Work = { id: it.id, title: it.title, date: '', series: '', bg: it.color ?? '#808080', shapes: it.shapes };
+      this.fillThumb(canvas, pseudo, it.path ? this.host.boardThumb(it) : null, () => this.host.makeBoardThumb(it), gen);
+      world.append(node);
+    }
+    if (b.marks?.length) paintMarksStatic(world, b.marks);
+    sheet.append(world);
+    this.chromeInto(sheet, p, plan.type, undefined, this.boardTexts(b), theme);
+    return this.wrap(sheet, p, scale);
+  }
+
+  /** 预览里填一幅：有缩略图直接放；还没有的先显示主色，排队生成，好了再换上（预览重建过就不填旧节点） */
+  private fillThumb(canvas: HTMLElement, w: Work, src: string | null | undefined, make: () => Promise<string | null>, gen: number): void {
     const put = (url: string | undefined) => {
       fillArt(canvas, w, undefined);
       if (!url) return;
@@ -530,11 +789,10 @@ export class ExportView {
       put(src ?? undefined);
       return;
     }
-    // 还没有缩略图：先显示主色，排队生成，好了再换上（预览重建过就不填旧节点）
     put(undefined);
     this.queue.push(async () => {
       if (gen !== this.gen) return;
-      const url = await this.host.makeThumb(w).catch(() => null);
+      const url = await make().catch(() => null);
       if (gen === this.gen && url) put(url);
     });
     this.pump();
@@ -554,17 +812,23 @@ export class ExportView {
     }
   }
 
-  private updateInfo(plan: ExportPlan, n: number): void {
-    const p = plan.pages[0];
-    if (this.s.layout === 'pdf') {
+  private updateInfo(plan: ExportPlan | null, n: number, boardPage?: Page): void {
+    const st = this.st;
+    if (boardPage) {
+      this.info.textContent = `${st.format.toUpperCase()}  ·  ${fmtNum(boardPage.w)} × ${fmtNum(boardPage.h)} px`;
+    } else if (plan && this.s.layout === 'pdf') {
+      const p = plan.pages[0];
       this.info.textContent = `PDF  ·  ${t('export.pages', { n: plan.pages.length })}  ·  ${fmtNum(p.w)} × ${fmtNum(p.h)} px`;
-    } else {
-      this.info.textContent = `${this.s.format.toUpperCase()}  ·  ${fmtNum(Math.round(p.w))} × ${fmtNum(Math.round(p.h))} px`;
-    }
+    } else if (plan) {
+      const p = plan.pages[0];
+      this.info.textContent = `${st.format.toUpperCase()}  ·  ${fmtNum(Math.round(p.w))} × ${fmtNum(Math.round(p.h))} px`;
+    } else this.info.textContent = '';
     let hint = '';
-    if (!n) hint = t('export.empty');
-    else if (plan.shrunk) hint = t('export.shrunk', { w: fmtNum(Math.round(p.w)), full: fmtNum(pageSize(this.s).w) });
-    else if (this.s.layout === 'collage' && n > CROWDED) hint = t('export.crowded');
+    // 没有情绪板时列表里已经写了，这里不重复
+    if (this.mode === 'board') {
+      if (this.host.boards().length && !n) hint = t('export.boardEmpty');
+    } else if (!n) hint = t('export.empty');
+    else if (plan?.shrunk) hint = t('export.shrunk', { w: fmtNum(Math.round(plan.pages[0].w)), full: fmtNum(pageSize(this.s).w) });
     this.hint.textContent = hint;
     this.hint.hidden = !hint;
     if (!this.ctl) this.saveBtn.disabled = !n;
@@ -574,11 +838,11 @@ export class ExportView {
 
   private async doExport(): Promise<void> {
     if (this.ctl) return;
-    const works = this.works();
-    if (!works.length) return;
-    const s = { ...this.s };
-    const plan = this.plan(works, s);
-    const total = plan.pages.reduce((x, p) => x + p.cells.length, 0);
+    const board = this.mode === 'board' ? this.board() : null;
+    const works = this.mode === 'works' ? this.works() : [];
+    if (board ? !board.items.length : !works.length) return;
+    const s = this.settings;
+    const total = board ? board.items.length : this.plan(works, s).pages.reduce((x, p) => x + p.cells.length, 0);
     let done = 0;
     const label = () => (this.saveLabel.textContent = t('export.progress', { done, total }));
     const ctl: RenderControl = {
@@ -591,13 +855,13 @@ export class ExportView {
     this.root.classList.add('is-busy');
     this.saveBtn.disabled = true;
     label();
-    const texts = this.texts(works);
     try {
-      const bytes = await this.render(works, s, ctl);
+      const bytes = board ? await this.renderBoardBytes(board, s.board, ctl) : await this.render(works, s, ctl);
       if (ctl.cancelled) throw new Error('cancelled');
       this.saveLabel.textContent = t('export.saving');
-      const ext = s.layout === 'pdf' ? 'pdf' : s.format;
-      const to = await this.host.save(bytes, `${safeName(texts.title || this.host.setName())}.${ext}`);
+      const ext = board ? s.board.format : s.layout === 'pdf' ? 'pdf' : s.format;
+      const name = board ? this.boardTexts(board).title : this.texts(works).title || this.host.setName();
+      const to = await this.host.save(bytes, `${safeName(name)}.${ext}`);
       if (to) this.host.toast(t('toast.saved', { name: to.split(/[\\/]/).pop() ?? to }));
     } catch (err) {
       if (ctl.cancelled || String(err).includes('cancelled')) this.host.toast(t('export.cancelled'));
@@ -606,7 +870,7 @@ export class ExportView {
       this.ctl = null;
       this.root.classList.remove('is-busy');
       this.saveLabel.textContent = t('export.save');
-      this.saveBtn.disabled = !this.works().length;
+      this.renderPreview();
     }
   }
 }

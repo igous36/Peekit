@@ -399,12 +399,21 @@ export class App {
     this.exporter = new ExportView({
       all: () => this.full.works,
       filtered: () => (this.filtering ? this.lib.works : null),
-      series: () => {
-        const cur = this.target();
-        if (!cur) return null;
-        const s = this.seriesById.get(cur.series);
-        return { name: s ? displayName(s) : t('series.unassigned'), works: this.full.works.filter((w) => w.series === cur.series) };
+      // 系列（2026-11-21 起可以选任意一个）：当前预览集里有作品的系列，按系列顺序，未归类放最后
+      seriesList: () => {
+        const by = new Map<string, Work[]>();
+        for (const w of this.full.works) {
+          const l = by.get(w.series);
+          if (l) l.push(w);
+          else by.set(w.series, [w]);
+        }
+        const out = this.full.series.filter((s) => by.has(s.id)).map((s) => ({ id: s.id, name: displayName(s), works: by.get(s.id)! }));
+        for (const [id, ws] of by) {
+          if (!out.some((x) => x.id === id)) out.push({ id, name: t('series.unassigned'), works: ws });
+        }
+        return out;
       },
+      currentSeries: () => this.target()?.series ?? null,
       setName: () => this.service.current.name,
       thumb: (w) => (!w.path || w.broken ? null : w.thumb),
       makeThumb: (w) => this.ensureThumb(w),
@@ -420,6 +429,31 @@ export class App {
           shapes: (i) => (works[i].path ? undefined : works[i].shapes),
         };
       },
+      // 情绪板导出（2026-11-21）
+      boards: () => boardsByRecent(this.boards.data),
+      boardThumb: (it) => (it.path ? this.workByPath(it.path)?.thumb : null),
+      makeBoardThumb: async (it) => {
+        if (!it.path || !this.service.desktop) return null;
+        return assetUrl((await makeThumbnail(it.path, it.mtime ?? 0, it.size ?? 0)).path);
+      },
+      boardImages: (b) => ({
+        load: async (i, pw, ph) => {
+          const it = b.items[i];
+          if (!it.path) return null;
+          const path = it.path;
+          const pseudo: Work = { id: path, path, title: it.title, date: '', series: '', bg: it.color ?? '#808080' };
+          const d = await loadExportImage(pseudo, pw, ph, {
+            thumbUrl: async () => this.workByPath(path)?.thumb ?? assetUrl((await makeThumbnail(path, it.mtime ?? 0, it.size ?? 0)).path),
+            originalUrl: async () => (imageKind(path) === 'convert'
+              ? assetUrl(await makeDisplay(path, it.mtime ?? 0, it.size ?? 0, false))
+              : assetUrl(path)),
+          });
+          if (!d) logInfo(`[导出] 读不了 ${path}`);
+          return d;
+        },
+        bg: (i) => b.items[i].color ?? '#808080',
+        shapes: (i) => (b.items[i].path ? undefined : b.items[i].shapes),
+      }),
       save: (bytes, name) => saveExport(bytes, name),
       toast: (msg, sticky) => this.toast.show(msg, sticky),
       close: () => this.closeExport(),
@@ -556,6 +590,10 @@ export class App {
       openReference: () => {
         const b = this.boardView.board;
         if (b) void this.openBoardReference(b.id);
+      },
+      exportBoard: () => {
+        const b = this.boardView.board;
+        if (b) this.openExport(b.id);
       },
       // 生成色卡（2026-11-20）：照片的主色组成，最多 5 个
       swatchesFor: async (it) => {
@@ -2010,15 +2048,17 @@ export class App {
 
   // ───────────── 导出（2026-11-21） ─────────────
 
-  openExport(): void {
+  /** 打开导出页。board：直接导出这个情绪板；没给但情绪板开着，就导出开着的那个 */
+  openExport(board?: string): void {
     if (this.exporter.isOpen) return;
+    if (!board && this.boardView.isOpen) board = this.boardView.board?.id;
     if (this.boardView.isOpen) this.closeBoard();
     if (this.calendar.isOpen) this.closeCalendar();
     if (this.ui.editing) this.finishEdit();
     if (this.controller.fullscreen) this.controller.toggleFullscreen();
     if (this.controller.magnified) this.controller.magnify(false);
     this.root.classList.add('is-export');
-    this.exporter.show();
+    this.exporter.show({ board });
   }
 
   private closeExport(): void {
@@ -2190,6 +2230,10 @@ export class App {
     add(act(t('board.new'), this.newBoard, { keywords: 'new mood board' }));
     add(act(t('calendar.title'), () => this.openCalendar(), { keywords: 'calendar year review heatmap stats' }), true);
     add(act(t('export.menu'), () => this.openExport(), { keywords: 'export save long image collage grid pdf portfolio share' }), true);
+    if (this.boardView.isOpen && this.boardView.board) {
+      const id = this.boardView.board.id;
+      add(act(t('export.boardMenu'), () => this.openExport(id), { keywords: 'export save mood board image' }), true);
+    }
     // 新旧对比（2026-11-20）：当前这一幅
     const cur = this.target();
     if (cur) {

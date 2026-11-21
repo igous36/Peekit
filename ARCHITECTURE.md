@@ -63,7 +63,8 @@ src/
                    拖起阵列（board-picker.ts）、情绪板画布（board/，标注层在 board-marks.ts）、星星（stars.ts）、
                    自检工具条（check-bar.ts）、命令面板（palette.ts）、创作年历（calendar.ts）和
                    它导出的年度回顾图（year-poster.ts）、新旧对比（compare.ts）、
-                   导出页（export-view.ts）和把排版画到画布上（export-render.ts）……
+                   导出页（export-view.ts）、把排版画到画布上（export-render.ts）、
+                   情绪板导出（export-board.ts）……
   data/            作品库模型、保存、导入和扫描、缩略图队列、取色队列、Rust 调用、
                    情绪板（boards.ts 数据和增删改，board-store.ts 保存）、
                    导出读图（export-images.ts）、PDF 写入（pdf.ts）
@@ -125,7 +126,9 @@ Rust 的 `open_reference`（`ui.rs`）开一个无边框、透明、钉在最上
 
 PDF 不引入库（`data/pdf.ts`）：每页先画成一张 canvas、压成 JPEG（质量 0.9），原样放进 PDF（DCTDecode）铺满整页，文字已经画在图里；标题写进文档信息（UTF-16BE）。长图受画布上限约束（单边 30000、面积 1.6 亿像素），超了整张等比缩小。
 
-导出设置记在 localStorage（`peekit:export`），作者名也在里面。导出里的 Peekit 标识是 `view/wordmark.ts` 里字标的笔画（canvas 上用 Path2D 描，预览里直接用 `markSvg`）。
+情绪板导出（`view/export-board.ts`）：`planBoardExport` 把照片和标注合起来的范围等比放进一张图，算出画布坐标到导出像素的缩放和偏移、网点间距；画的时候按情绪板里的先后顺序（后面的盖在前面上面）一张张读图画上去，最多先往后多读 3 张，再把标注按画布坐标重画一遍。canvas 的阴影不受变换影响，模糊和偏移要自己乘缩放。预览直接用画布上同一套 `.board-item` 样式和 `paintMarksStatic`。
+
+导出设置记在 localStorage（`peekit:export`），作者名也在里面，情绪板模式的底色、留白这些另记在它的 `board` 里。导出里的 Peekit 标识是 `view/wordmark.ts` 里字标的笔画（canvas 上用 Path2D 描，预览里直接用 `markSvg`）。
 
 `PEEKIT_PERF=export`：取前 8 幅读得了的作品，各导出一次长图（2 倍尺寸，会读原图）、3 列网格（PNG）、4:3 拼图、A4 横版 PDF，打出尺寸、大小、耗时，图片版抽查第一幅中间一块的色阶，然后关掉主窗口。不保存文件。
 

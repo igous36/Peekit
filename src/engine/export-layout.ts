@@ -397,6 +397,75 @@ function pdfPlan(a: readonly number[], s: ExportSettings, cover: readonly number
   return { pages, type: t, cover: s.summary ? big : undefined, capLines: 1, shrunk: false };
 }
 
+// ───────────── 情绪板导出（2026-11-21） ─────────────
+
+/** 情绪板导出的设置（和作品导出分开记） */
+export interface BoardExportSettings {
+  margin: Spacing;
+  summary: boolean;
+  brand: boolean;
+  size: ExportSize;
+}
+
+/** 情绪板导出图的长边（1× 时，px） */
+export const BOARD_LONG = 2400;
+
+export interface BoardPlan {
+  page: Page;
+  type: ExportType;
+  /** 画布坐标 → 导出像素：px = ox + x · k */
+  k: number;
+  ox: number;
+  oy: number;
+  /** 网点：细点间距、粗点间距（导出像素），网格原点和画布原点对齐 */
+  dot: number;
+  dotMajor: number;
+}
+
+/** 网点：画布上细点间距是 24 × 4^j（和情绪板画布一样），挑一个让导出图上的间距落在 [18u, 72u) 的 */
+const BOARD_DOT = 24;
+
+/**
+ * 情绪板按画布上的样子原样导出：content 是照片和标注合起来的范围（画布坐标），
+ * 等比缩放放进一张图，长边是 BOARD_LONG × 尺寸；四周留白，下面可选说明、Peekit 标识（同长图）
+ */
+export function planBoardExport(content: Rect, s: BoardExportSettings): BoardPlan {
+  const L = Math.round(BOARD_LONG * s.size);
+  const u = L / BASE_WIDTH;
+  const M = MARGIN[s.margin] * u;
+  const t = typeFor(u);
+  const bh = BRAND_H * u;
+  const sep = sepFor(M, u);
+  const extra = s.summary ? sep + summaryBlock(t, u) : s.brand ? sep + bh : 0;
+  const bw = Math.max(1, content.w), bhh = Math.max(1, content.h);
+  // 先按横图算（宽 = 长边），高超过长边就按竖图算（高 = 长边）
+  let W = L;
+  let k = (W - 2 * M) / bw;
+  let H = bhh * k + 2 * M + extra;
+  if (H > L) {
+    H = L;
+    k = Math.max(0.01, (H - 2 * M - extra) / bhh);
+    W = bw * k + 2 * M;
+  }
+  W = Math.round(W);
+  H = Math.round(H);
+  const ox = M + (W - 2 * M - bw * k) / 2 - content.x * k;
+  const oy = M - content.y * k;
+  const page: Page = { w: W, h: H, cells: [] };
+  const bottom = M + bhh * k;
+  if (s.summary) {
+    const ry = bottom + sep;
+    page.rule = { x: M, y: ry, w: W - 2 * M };
+    page.summary = { x: M, y: ry + 40 * u, w: W - 2 * M, big: false };
+    if (s.brand) brandBesideSummary(page, W - M, t.titleLine, bh, u);
+  } else if (s.brand) {
+    page.brand = { x: W - M, y: bottom + sep, h: bh };
+  }
+  const j = Math.ceil(Math.log((18 * u) / (BOARD_DOT * k)) / Math.log(4));
+  const dot = BOARD_DOT * Math.pow(4, j) * k;
+  return { page, type: t, k, ox, oy, dot, dotMajor: dot * 4 };
+}
+
 /** 作品日期（2025.03.08 这种）→ 说明里的时间范围“2023.04 – 2025.11”；同一个月只写一个；都不知道返回空 */
 export function dateRange(dates: readonly string[]): string {
   const ms = dates.map((d) => /^(\d{4})\.(\d{2})/.exec(d)).filter((m): m is RegExpExecArray => !!m).map((m) => `${m[1]}.${m[2]}`);
