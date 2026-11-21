@@ -161,15 +161,18 @@ PDF 不引入库（`data/pdf.ts`）：每页先画成一张 canvas、压成 JPEG
 
 ## 自动更新和发版
 
-`src/updater.ts` 是状态机，Tauri 的调用从外面传进来，方便单测。启动 5 秒后、之后每 12 小时读一次 `https://github.com/igous36/Peekit/releases/latest/download/latest.json`。地址和验签公钥写在 `src-tauri/tauri.conf.json` 里，前端改不了。用户点了“更新”才下载，下载完先写盘，再交给 NSIS 安装程序（passive 模式，装完自动重新打开应用）。更新插件用系统 TLS，不带 rustls，安装包只大了约 0.2 MiB。
+`src/updater.ts` 是状态机，Tauri 的调用从外面传进来，方便单测。启动 5 秒后、之后每 12 小时读一次更新清单：正式版读 `https://github.com/igous36/Peekit/releases/latest/download/latest.json`（标成 Latest 的 Release），测试版先读测试版通道 `releases/download/beta/latest.json`，读不到再读正式版的。地址和验签公钥写在 `src-tauri/tauri.conf.json` 里，前端改不了。用户点了“更新”才下载，下载完先写盘，再交给 NSIS 安装程序（passive 模式，装完自动重新打开应用）。更新插件用系统 TLS，不带 rustls，安装包只大了约 0.2 MiB。
 
 更新包用私钥签名，私钥不在仓库里，默认在 `~/.tauri/peekit-updater.key`。私钥丢了，已经装上的版本就再也收不到更新。发版步骤：
 
 1. 改 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号。
 2. 运行 `npm run release`，它会签名打包，并生成 `src-tauri/target/release/bundle/latest.json`。
 3. 把 NSIS 安装包、MSI 和 `latest.json` 传到 GitHub Release，并设为 Latest。
+4. 把同一个 `latest.json` 也传到测试版通道：`gh release upload beta <latest.json> --clobber`，装了测试版的人才会升到正式版。
 
-测试版（版本号像 `0.2.0-beta.1`）：MSI 的版本号只能是数字，`npm run release` 会另给 MSI 一个 `0.2.0.1` 这样的版本号（取预发布号末尾的数字）。测试版的 Release 标成预发布，不设 Latest，所以装了正式版的人不会被自动更新到测试版。
+测试版（版本号像 `0.2.0-beta.1`）：MSI 的版本号只能是数字，`npm run release` 会另给 MSI 一个 `0.2.0.1` 这样的版本号（取预发布号末尾的数字）。测试版的 Release 标成预发布，不设 Latest，所以装了正式版的人不会被自动更新到测试版。测试版的更新地址由 `npm run release` 换成测试版通道（tag 叫 `beta` 的预发布 Release，里面只有一个 `latest.json`，每次发测试版、正式版都用 `--clobber` 覆盖）。
+
+0.2.0-beta.1 打包时还没有测试版通道，只会读 Latest。为了让它能升到 beta2，beta2 的 `latest.json` 也挂在了当时的 Latest（v0.1.3）上；v0.1.3 正式版本身没有自动更新，不会被推测试版。等 0.2.0 正式版设成 Latest，这份就用不上了。
 不需要更新签名时，`npm run tauri build` 照常能用。
 
 ## 测试和调试

@@ -12,7 +12,12 @@
 //   src-tauri/target/release/bundle/nsis/Peekit_<版本>_x64-setup.exe
 //   src-tauri/target/release/bundle/msi/Peekit_<版本>_x64_zh-CN.msi
 //   src-tauri/target/release/bundle/latest.json
-// 应用读的是 releases/latest/download/latest.json，所以新版本要设成 Latest。
+// 正式版读 releases/latest/download/latest.json，所以正式版要设成 Latest。
+//
+// 测试版更新通道（2026-11-21）：测试版（0.2.0-beta.2 这种版本号）打包时把更新地址换成
+// releases/download/beta/latest.json（tag 叫 beta 的那个预发布 Release，只放一个 latest.json），查不到再退回正式版的地址。
+// 所以每次发测试版、正式版，都要把 latest.json 也传一份到 beta 这个 Release（--clobber 覆盖），
+// 装了测试版的人才能收到下一个测试版和正式版。
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -28,6 +33,9 @@ const opt = (name) => {
 
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const repo = 'https://github.com/igous36/Peekit';
+/** 更新地址：正式版（Latest 的 Release）、测试版通道（tag 叫 beta 的 Release） */
+const STABLE_FEED = `${repo}/releases/latest/download/latest.json`;
+const BETA_FEED = `${repo}/releases/download/beta/latest.json`;
 const baseUrl = (opt('--base-url') ?? `${repo}/releases/download/v${version}`).replace(/\/$/, '');
 const bundle = join(root, 'src-tauri', 'target', 'release', 'bundle');
 const files = {
@@ -48,15 +56,20 @@ if (!args.includes('--skip-build')) {
   env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ??= '';
   env.CARGO_BUILD_JOBS ??= '4';
   const configs = ['--config', 'src-tauri/tauri.updater.conf.json'];
-  // MSI 的版本号只能是数字（major.minor.patch.build），0.2.0-beta.1 这种测试版要单独给它一个：取预发布号末尾的数字当第四段
+  // 测试版另给一份配置（--config 是合并进去的，没写的项照旧）：
+  // - MSI 的版本号只能是数字（major.minor.patch.build）：取预发布号末尾的数字当第四段
+  // - 更新地址先查测试版通道，查不到再查正式版
   const pre = /^(\d+\.\d+\.\d+)-(?:.*?)(\d+)?$/.exec(version);
   if (pre) {
-    const wixConf = join(root, 'src-tauri', 'target', 'wix-version.conf.json');
-    mkdirSync(dirname(wixConf), { recursive: true });
+    const preConf = join(root, 'src-tauri', 'target', 'prerelease.conf.json');
+    mkdirSync(dirname(preConf), { recursive: true });
     const wixVersion = `${pre[1]}.${pre[2] ?? 0}`;
-    writeFileSync(wixConf, JSON.stringify({ bundle: { windows: { wix: { version: wixVersion } } } }));
-    configs.push('--config', wixConf);
-    console.log(`测试版：MSI 版本号用 ${wixVersion}`);
+    writeFileSync(preConf, JSON.stringify({
+      bundle: { windows: { wix: { version: wixVersion } } },
+      plugins: { updater: { endpoints: [BETA_FEED, STABLE_FEED] } },
+    }));
+    configs.push('--config', preConf);
+    console.log(`测试版：MSI 版本号用 ${wixVersion}，更新地址先查测试版通道`);
   }
   console.log(`打包 Peekit ${version}（带更新签名）…`);
   const r = spawnSync('npx', ['tauri', 'build', ...configs], {
@@ -97,3 +110,4 @@ const out = join(bundle, 'latest.json');
 writeFileSync(out, JSON.stringify(manifest, null, 2) + '\n');
 console.log(`已生成 ${out}`);
 console.log(`上传到 Release v${version}：\n  ${files.nsis}\n  ${files.msi}\n  ${out}`);
+console.log(`再把 latest.json 传一份到测试版通道：gh release upload beta "${out}" --clobber`);

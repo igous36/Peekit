@@ -1,6 +1,6 @@
 [package]
 name = "peekit"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 description = "Peekit：磨砂玻璃时间轴插画浏览器"
 edition = "2021"
 
