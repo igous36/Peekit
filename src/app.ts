@@ -531,6 +531,14 @@ export class App {
         const b = this.boardView.board;
         if (b) void this.openBoardReference(b.id);
       },
+      // 生成色卡（2026-11-20）：照片的主色组成，最多 5 个
+      swatchesFor: async (it) => {
+        if (!it.path) return swatchesFromShapes(it.shapes ?? [], it.color ?? '#808080').slice(0, 5).map((s) => s.hex);
+        const svg = imageKind(it.path) === 'svg';
+        const url = svg ? assetUrl(it.path) : assetUrl((await makeThumbnail(it.path, it.mtime ?? 0, it.size ?? 0)).path);
+        const px = svg ? await sampleSvg(url, 48) : await sampleImage(url, 48);
+        return swatchesOf(px, 5).map((s) => s.hex);
+      },
       desktop: this.service.desktop,
     });
     this.picker = new BoardPicker({

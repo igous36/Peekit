@@ -48,6 +48,16 @@ import {
 import { spring } from '../../tokens';
 import { prefs, wheelCanToggleFullscreen } from '../../prefs';
 import { markSvg, MOOD_BOARDS, WORDMARK_HEIGHT, writeMark } from '../wordmark';
+import { MarkLayer } from './board-marks';
+import { MARK_COLORS, contentBounds, type MarkTool } from '../../engine/marks';
+
+/** 标注工具条的图标（2026-11-20）：选择、便签、箭头、直线、画笔、色卡 */
+const ICON_CURSOR = ['M6 3l12 9-5.5 1.2L15 19l-2.5 1.2-2.6-5.8L6 18Z'];
+const ICON_NOTE = ['M5 4h14v10l-6 6H5z', 'M13 20v-6h6'];
+const ICON_ARROW = ['M5 19 19 5', 'M10 5h9v9'];
+const ICON_LINE = ['M5 19 19 5'];
+const ICON_SCRIBBLE = ['M4 16c2.5-5 4.5-6 5.5-4s-1 6 1.5 5.5S15 9 17.5 8s1.5 5 2.5 6'];
+const ICON_SWATCH = ['M4 6h4v12H4z', 'M10 6h4v12h-4z', 'M16 6h4v12h-4z'];
 
 const ICON_OPTIMIZE = ['M4 4h7v7H4z', 'M13 4h7v4h-7z', 'M13 10h7v10h-7z', 'M4 13h7v7H4z'];
 const ICON_FIT = ['M4 9V4h5', 'M20 9V4h-5', 'M4 15v5h5', 'M20 15v5h-5'];
@@ -78,6 +88,8 @@ export interface BoardViewHost {
   paintSample(it: BoardItem, canvas: HTMLElement): void;
   /** 把这个情绪板弹成置顶参考小窗（2026-11-20，只读） */
   openReference?(): void;
+  /** 一张照片的主色（最多 5 个，生成色卡用，2026-11-20） */
+  swatchesFor(it: BoardItem): Promise<string[]>;
   desktop: boolean;
 }
 
@@ -224,6 +236,11 @@ export class BoardView {
   /** 大量照片一起换位置时画布的淡出淡入（0–1）；淡到底时把位置一次换好，见 crossfade */
   private fade = scalar(1);
   private fadeApply: (() => void) | null = null;
+  /** 标注层（2026-11-20）和底部的工具条 */
+  private marks: MarkLayer;
+  private toolBtns = new Map<MarkTool, HTMLButtonElement>();
+  private colorDots: HTMLButtonElement[] = [];
+  private shownColor = -1;
 
   constructor(private host: BoardViewHost) {
     const dots = el('div', { class: 'board-dots' });
@@ -286,6 +303,23 @@ export class BoardView {
       if (e.deltaY > 0) this.closeFull();
     }, { passive: false });
 
+    // 标注层（2026-11-20）：在画布里、所有照片上面
+    this.marks = new MarkLayer({
+      zoom: () => this.cam.z.v,
+      toWorld: (sx, sy) => toWorld(this.camNow(), sx, sy, this.vw, this.vh),
+      changed: () => {
+        if (this.board) this.board.updatedAt = Date.now();
+        this.host.save();
+        this.host.kick();
+      },
+      toast: (msg, action) => this.host.toast(msg, action),
+      contextMenu: (items, x, y, label) => this.host.contextMenu(items, x, y, label),
+      clearPhotoSelection: () => this.select([]),
+      toolDone: () => this.setTool('select'),
+    });
+    world.append(this.marks.el);
+    const tools = this.buildTools();
+
     const canvas = el('div', { class: 'board-canvas', tabindex: 0, 'data-i18n-aria': 'board.aria' }, [
       dots, major, world, this.guides, marquee, this.empty, ...edges,
     ]);
@@ -294,6 +328,7 @@ export class BoardView {
       el('div', { class: 'board-drag', 'data-tauri-drag-region': '' }),
       this.bar,
       this.zoomBtn,
+      tools,
       this.full,
     ]);
     canvas.addEventListener('pointerdown', this.onDown);
@@ -322,6 +357,62 @@ export class BoardView {
     return this.root.firstElementChild as HTMLElement;
   }
 
+  // ───────────── 标注工具条（2026-11-20） ─────────────
+
+  /** 底部正中：选择 / 便签 / 箭头 / 直线 / 画笔 │ 5 个颜色 */
+  private buildTools(): HTMLElement {
+    const tools: [MarkTool, string[], string][] = [
+      ['select', ICON_CURSOR, 'V'], ['note', ICON_NOTE, 'N'], ['arrow', ICON_ARROW, 'A'], ['line', ICON_LINE, 'L'], ['pen', ICON_SCRIBBLE, 'P'],
+    ];
+    const btns = tools.map(([k, icon, key]) => {
+      const label = t('check.withKey', { name: t(`marks.tool.${k}`), key });
+      const b = el('button', { type: 'button', class: 'board-tool', 'aria-pressed': String(k === 'select'), 'aria-label': label, title: label }, [svgIcon(icon, 18)]);
+      b.addEventListener('click', () => this.setTool(k));
+      this.toolBtns.set(k, b);
+      return b;
+    });
+    this.colorDots = MARK_COLORS.map((c, i) => {
+      const label = t(`marks.color.${c.key}`);
+      const b = el('button', { type: 'button', class: 'board-tool-color', 'aria-pressed': String(i === 0), 'aria-label': label, title: label }, [el('span')]);
+      (b.firstElementChild as HTMLElement).style.background = c.ink;
+      b.addEventListener('click', () => {
+        this.marks.setColor(i);
+        this.paintToolColors();
+      });
+      return b;
+    });
+    const bar = el('div', { class: 'board-tools', role: 'toolbar', 'data-i18n-aria': 'marks.toolbar' }, [
+      ...btns, el('span', { class: 'board-tools-sep', 'aria-hidden': 'true' }), ...this.colorDots,
+    ]);
+    bar.addEventListener('pointerdown', (e) => e.stopPropagation());
+    return bar;
+  }
+
+  private setTool(k: MarkTool): void {
+    this.marks.tool = k;
+    for (const [key, b] of this.toolBtns) b.setAttribute('aria-pressed', String(key === k));
+    this.root.dataset.tool = k;
+    if (k !== 'select') this.marks.select(null);
+  }
+
+  /** 色点：选中了标注就亮它的颜色，否则亮新标注会用的颜色（每帧调，没变不改 DOM） */
+  private paintToolColors(): void {
+    const c = this.marks.selectedColor() ?? this.marks.color;
+    if (c === this.shownColor) return;
+    this.shownColor = c;
+    this.colorDots.forEach((b, i) => b.setAttribute('aria-pressed', String(i === c)));
+  }
+
+  /** 右键照片“生成色卡”：取它的主色，在右边放一张色卡 */
+  private async makeSwatch(it: BoardItem): Promise<void> {
+    const colors = await this.host.swatchesFor(it).catch(() => [] as string[]);
+    if (!colors.length) {
+      this.host.toast(t('marks.swatchFailed'));
+      return;
+    }
+    this.marks.addSwatch(colors, it);
+  }
+
   get isOpen(): boolean {
     return this.op.t > 0.5;
   }
@@ -344,9 +435,11 @@ export class BoardView {
     this.closeFullNow();
     this.drag = null;
     this.rebuild();
+    this.marks.setBoard(board);
+    this.setTool('select');
     this.updateTitle();
     const vw = this.vw, vh = this.vh;
-    const cam = board.cam ?? fitCam(bounds(board.items), vw, vh);
+    const cam = board.cam ?? fitCam(contentBounds(board.items, board.marks), vw, vh);
     setCam(this.cam, cam);
     this.root.hidden = false;
     this.root.classList.remove('is-focus');
@@ -397,6 +490,7 @@ export class BoardView {
   /** 换了别的情绪板 / 情绪板被删掉 */
   detach(): void {
     this.board = null;
+    this.marks.setBoard(null);
     for (const n of this.order) n.el.remove();
     this.nodes.clear();
     this.order = [];
@@ -639,7 +733,7 @@ export class BoardView {
     const b = this.board;
     if (!b) return;
     this.exitFocus(false);
-    setCamTarget(this.cam, fitCam(bounds(b.items), this.vw, this.vh));
+    setCamTarget(this.cam, fitCam(contentBounds(b.items, b.marks), this.vw, this.vh));
     this.showZoom();
     this.host.kick();
   }
@@ -1066,6 +1160,7 @@ export class BoardView {
     let cursor = '';
     if (this.space) cursor = 'grab';
     else if (this.focus) cursor = 'grab';
+    else if (this.marks.tool !== 'select') cursor = 'crosshair';
     else {
       const h = this.handleAt(e.clientX, e.clientY);
       if (h) cursor = h.handle === 'n' || h.handle === 's' ? 'ns-resize' : h.handle === 'e' || h.handle === 'w' ? 'ew-resize' : h.handle === 'nw' || h.handle === 'se' ? 'nwse-resize' : 'nesw-resize';
@@ -1085,6 +1180,11 @@ export class BoardView {
       return;
     }
     if (e.button !== 0) return;
+    // 标注工具（便签、箭头、直线、画笔）：按下就开始画，交给标注层（2026-11-20）
+    if (!this.focus && this.marks.down(e)) {
+      e.preventDefault();
+      return;
+    }
     if (this.focus) {
       this.drag = { kind: 'focus', id: e.pointerId, x0: x, y0: y, cam0: this.camNow(), samples: [{ t: performance.now(), x, y }], moved: false };
       this.capture(e.pointerId);
@@ -1100,6 +1200,8 @@ export class BoardView {
       return;
     }
     const n = this.nodeAt(x, y);
+    // 点到照片或空白：取消标注的选中
+    this.marks.select(null);
     if (n) {
       const d: Drag = { kind: 'press', id: e.pointerId, x0: x, y0: y, node: n, shift: e.shiftKey || e.ctrlKey || e.metaKey, timer: 0 };
       // 长按：拎起整个集合（集合里的照片一起浮起来）
@@ -1554,6 +1656,8 @@ export class BoardView {
         );
       }
       items.push({ label: t('board.focus'), icon: ICON_FIT, run: () => this.focusOn(n) });
+      // 生成色卡（2026-11-20）：取这张的主色，在右边放一张色卡
+      items.push({ label: t('marks.makeSwatch'), icon: ICON_SWATCH, run: () => void this.makeSwatch(it) });
       if (it.path && this.host.desktop) {
         items.push(
           'divider',
@@ -1618,6 +1722,27 @@ export class BoardView {
       return;
     }
     const mod = e.ctrlKey || e.metaKey;
+    // 标注（2026-11-20）：工具快捷键；Esc 先退回选择工具、再取消选中的标注；Delete 删选中的标注
+    const toolKey: Record<string, MarkTool> = { v: 'select', n: 'note', a: 'arrow', l: 'line', p: 'pen' };
+    const tk = !mod && !e.altKey && !this.fullState && !this.focus ? toolKey[e.key.toLowerCase()] : undefined;
+    if (tk) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.setTool(tk);
+      return;
+    }
+    if (e.key === 'Escape' && (this.marks.tool !== 'select' || this.marks.selected) && !this.fullState) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.marks.tool !== 'select') this.setTool('select');
+      else this.marks.select(null);
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.marks.selected && !this.fullState) {
+      e.preventDefault();
+      this.marks.deleteSelected();
+      return;
+    }
     if (e.key === 'Escape') {
       // 全屏 → 退出全屏；聚焦 → 退出聚焦；其余直接回到预览（选中的顺手取消）
       e.preventDefault();
@@ -1733,6 +1858,7 @@ export class BoardView {
     if (this.op.t === 0 && this.op.v === 0 && this.board) {
       this.root.hidden = true;
       this.board = null;
+      this.marks.setBoard(null);
       for (const n of this.order) n.el.remove();
       this.nodes.clear();
       this.order = [];
@@ -1823,6 +1949,7 @@ export class BoardView {
     const fn = this.fullState ? this.nodes.get(this.fullState.id) : undefined;
     if (fn) this.renderNode(fn);
     this.renderGuides();
+    this.paintToolColors();
     // 缩放倍率
     const showZoom = performance.now() - this.zoomShownAt < 1200;
     this.zoomBtn.classList.toggle('is-active', showZoom);

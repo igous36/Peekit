@@ -11,6 +11,7 @@ import {
   BOARD_GAP, GROUP_GAP, adjacent, bounds, components, fitSize, justify, overlap, type Box,
 } from '../engine/board-layout';
 import { BoxGrid } from '../engine/box-grid';
+import { parseMarks, type BoardMark } from '../engine/marks';
 
 export const BOARDS_VERSION = 1;
 /** 情绪板名字的长度上限（和预览集一样） */
@@ -65,6 +66,8 @@ export interface Board {
   groups: BoardGroup[];
   /** 上次关掉时的镜头 */
   cam?: { x: number; y: number; z: number };
+  /** 标注（2026-11-20）：便签、箭头和直线、色卡、手绘，画在照片上面（engine/marks.ts） */
+  marks?: BoardMark[];
 }
 
 export interface SavedBoards {
@@ -130,9 +133,10 @@ export function parseBoards(raw: unknown): SavedBoards {
       }))
       : [];
     const cam = isObj(b.cam) && num(b.cam.z) > 0 ? { x: num(b.cam.x), y: num(b.cam.y), z: num(b.cam.z) } : undefined;
+    const marks = parseMarks(b.marks);
     const board: Board = {
       id: b.id, name: b.name.slice(0, BOARD_NAME_MAX), createdAt: num(b.createdAt), updatedAt: num(b.updatedAt),
-      items, groups, cam,
+      items, groups, cam, ...(marks.length ? { marks } : {}),
     };
     // 照片引用了不存在的集合：补上
     for (const it of items) if (!board.groups.some((g) => g.id === it.group)) addGroup(board, it.group);

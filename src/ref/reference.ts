@@ -13,7 +13,9 @@ import { el, svgIcon, ICON_CLOSE, ICON_FLIP, ICON_PIN } from '../view/dom';
 import { fillArt } from '../view/art';
 import { createLibraryStore } from '../data/persist';
 import { groupColor, parseBoards, type Board } from '../data/boards';
-import { bounds, fitCam, zoomAround, type Cam } from '../engine/board-layout';
+import { fitCam, zoomAround, type Cam } from '../engine/board-layout';
+import { paintMarksStatic } from '../view/board/board-marks';
+import { contentBounds } from '../engine/marks';
 import { assetUrl, logInfo, makeThumbnail, onBoardsSaved } from '../data/tauri-io';
 import { r3 } from '../engine/math';
 import type { Work } from '../data/types';
@@ -184,7 +186,7 @@ export async function bootReference(params: URLSearchParams, mount: HTMLElement)
       return;
     }
     renderBoard(world, b);
-    content = bounds(b.items);
+    content = contentBounds(b.items, b.marks);
     if (first) {
       first = false;
       fit();
@@ -233,4 +235,6 @@ function renderBoard(world: HTMLElement, b: Board): void {
     }
   }
   world.replaceChildren(...nodes);
+  // 标注（便签、箭头、色卡、手绘）画在照片上面
+  if (b.marks?.length) paintMarksStatic(world, b.marks);
 }
