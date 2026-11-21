@@ -312,8 +312,23 @@ function collagePlan(a: readonly number[], s: ExportSettings): ExportPlan {
     bottom = H - M - bh - Math.max(G, 32 * u);
   }
   const cap = s.captions ? capBlock(u, 2) : 0;
-  page.cells = fillBox(a, { x: M, y: M, w: W - 2 * M, h: bottom - M }, G, cap, 16 * u);
+  const box = { x: M, y: M, w: W - 2 * M, h: bottom - M };
+  page.cells = fillBox(a, box, collageGap(a.length, box, s.gap, u), cap, 16 * u);
   return { pages: [page], type: t, capLines: 2, shrunk: false };
+}
+
+/** 拼图的间距占“平均每幅边长”的比例：小 / 中 / 大 */
+const COLLAGE_GAP_RATIO = [0.05, 0.09, 0.15];
+
+/**
+ * 拼图的间距随作品数变（2026-11-21）：一页里作品越多、每幅越小，间距跟着缩小。
+ * 平均每幅的边长按“框的面积 ÷ 幅数”开方估计，间距取它的固定比例，不超过长图、网格用的那一档
+ * （作品少时和那一档一样）
+ */
+export function collageGap(n: number, box: Rect, level: Spacing, u: number): number {
+  const fixed = GAP[level] * u;
+  if (n <= 0 || box.w <= 0 || box.h <= 0) return fixed;
+  return Math.min(fixed, COLLAGE_GAP_RATIO[level] * Math.sqrt((box.w * box.h) / n));
 }
 
 function pdfPlan(a: readonly number[], s: ExportSettings, cover: readonly number[]): ExportPlan {

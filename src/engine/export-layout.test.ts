@@ -160,3 +160,31 @@ describe('导出的 Peekit 标识', () => {
     noCover.forEach(brandOk);
   });
 });
+
+describe('拼图的间距随作品数变', () => {
+  /** 第一行里相邻两幅之间的空 */
+  function rowGap(n: number, gap: 0 | 1 | 2): { gap: number; h: number } {
+    const p = planExport(Array(n).fill(1.5), { ...base, layout: 'collage', gap, summary: false }).pages[0];
+    const row = p.cells.filter((c) => Math.abs(c.y - p.cells[0].y) < 0.5);
+    return { gap: row[1].x - (row[0].x + row[0].w), h: row[0].h };
+  }
+
+  it('作品少时和固定的那一档一样', () => {
+    const u = 1920 / 1600;
+    expect(rowGap(3, 1).gap).toBeCloseTo(44 * u, 0);
+  });
+
+  it('作品多时间距跟着每幅变小，比例和作品少时差不多', () => {
+    const few = rowGap(6, 1), many = rowGap(60, 1);
+    expect(many.gap).toBeLessThan(few.gap / 2);
+    expect(many.gap / many.h).toBeLessThan(0.2);
+  });
+
+  it('不管多少幅，小 < 中 < 大', () => {
+    for (const n of [4, 20, 60, 150]) {
+      const [s, m, l] = ([0, 1, 2] as const).map((g) => rowGap(n, g).gap);
+      expect(s).toBeLessThan(m);
+      expect(m).toBeLessThan(l);
+    }
+  });
+});
