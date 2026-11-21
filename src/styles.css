@@ -2594,7 +2594,6 @@ button:focus-visible {
   align-items: center;
 }
 
-.export-brand > img,
 .export-brand > svg {
   display: block;
   flex: none;
@@ -5326,19 +5325,6 @@ html.is-ref body {
 .status-chip-text--sans {
   font: 500 13px/1 var(--font-family-sans);
   text-transform: capitalize;
-}
-
-/* 系统取色框挂在这个看不见的输入框上，放在左上角菜单旁边，弹出来的取色框就在菜单附近 */
-.color-input {
-  position: absolute;
-  left: 300px;
-  top: 52px;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
 }
 
 /* ───────────── 字标后面的状态标签（2026-11-20） ─────────────

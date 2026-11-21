@@ -5,26 +5,15 @@ import type { Shape } from '../data/types';
 import { lang, langTag } from '../i18n';
 import { font, sansByLang } from '../tokens';
 import { buildPdf, type PdfImagePage } from '../data/pdf';
-import { BRAND, brandWidth, PDF_POINTS, type ExportPlan, type ExportType, type Page, type PdfPageSize } from '../engine/export-layout';
+import { brandWidth, PDF_POINTS, type ExportPlan, type ExportType, type Page, type PdfPageSize } from '../engine/export-layout';
 import { PEEKIT } from './wordmark';
-import iconUrl from '../../src-tauri/icons/icon.png';
 
-/** 导出里 Peekit 标识用的应用图标（512px，读一次） */
-export const BRAND_ICON = iconUrl;
-let iconBitmap: Promise<ImageBitmap | null> | null = null;
-function loadIcon(): Promise<ImageBitmap | null> {
-  iconBitmap ??= fetch(iconUrl).then((r) => r.blob()).then((b) => createImageBitmap(b)).catch(() => null);
-  return iconBitmap;
-}
-
-/** Peekit 标识：图标 + 手写字标（字标用界面左上角同一套笔画，灰色） */
-function drawBrand(g: CanvasRenderingContext2D, b: NonNullable<Page['brand']>, color: string, icon: ImageBitmap | null): void {
-  const left = b.x - brandWidth(b.h);
-  if (icon) g.drawImage(icon, left, b.y, b.h, b.h);
+/** Peekit 标识：手写字标（界面左上角同一套笔画），灰色 */
+function drawBrand(g: CanvasRenderingContext2D, b: NonNullable<Page['brand']>, color: string): void {
   const v = PEEKIT.viewBox;
-  const mh = b.h * BRAND.mark, k = mh / v.h;
+  const k = b.h / v.h;
   g.save();
-  g.translate(left + b.h * (1 + BRAND.gap) - v.x * k, b.y + (b.h - mh) / 2 - v.y * k);
+  g.translate(b.x - brandWidth(b.h) - v.x * k, b.y - v.y * k);
   g.scale(k, k);
   g.strokeStyle = color;
   g.fillStyle = color;
@@ -218,7 +207,7 @@ export async function renderPage(
     if (texts.title) line(g, texts.title, x, y, st.titleLine, w, F(600, st.title), theme.ink);
     if (texts.meta) line(g, texts.meta, x, y + st.titleLine + st.metaGap, st.metaLine, w, F(400, st.meta), theme.sub);
   }
-  if (page.brand) drawBrand(g, page.brand, theme.sub, await loadIcon());
+  if (page.brand) drawBrand(g, page.brand, theme.sub);
   return canvas;
 }
 

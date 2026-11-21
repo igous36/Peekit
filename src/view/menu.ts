@@ -115,7 +115,8 @@ export interface MenuHandlers {
   /** 按颜色筛选（2026-11-20）：现在的颜色条件、改条件（null = 不按颜色）、弹系统取色框挑任意颜色 */
   colorFilter: () => ColorFilter | null;
   setColorFilter: (f: ColorFilter | null) => void;
-  pickColor: () => void;
+  /** 弹“任意颜色”取色器；at 是弹出的位置 */
+  pickColor: (at?: { x: number; y: number }) => void;
   /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊现在开没开，切换一项 */
   checks: () => Readonly<Record<CheckKind, boolean>>;
   toggleCheck: (k: CheckKind) => void;
@@ -440,7 +441,7 @@ export class AppMenu {
 
   /**
    * 颜色筛选（2026-11-20）：一行文字，下面 11 个色块（红橙黄绿青蓝紫粉 + 黑白灰）和一个“任意颜色”。
-   * 点色块 = 只看有这个颜色的作品，再点同一个 = 不按颜色筛；点“任意颜色”弹系统取色框（带吸管）
+   * 点色块 = 只看有这个颜色的作品，再点同一个 = 不按颜色筛；点“任意颜色”收起菜单，在它旁边弹取色器
    */
   private colorRow(): HTMLElement {
     const cur = this.handlers.colorFilter();
@@ -460,9 +461,14 @@ export class AppMenu {
       });
     });
     const custom = cur?.kind === 'hex' ? cur.hex : null;
-    dots.push(swatch(custom ? `${t('color.pickAny')} ${custom}` : t('color.pickAny'), !!custom,
+    const any = swatch(custom ? `${t('color.pickAny')} ${custom}` : t('color.pickAny'), !!custom,
       custom ?? 'conic-gradient(from 90deg, #E85A4F, #EBC53A, #5BAA55, #3FB2B8, #3E7BD6, #8B5FD0, #E275AE, #E85A4F)',
-      () => this.handlers.pickColor(), 'color-dot--any'));
+      () => {
+        const r = any.getBoundingClientRect();
+        this.dropdown.close(false);
+        this.handlers.pickColor({ x: r.right + 10, y: r.top - 8 });
+      }, 'color-dot--any');
+    dots.push(any);
     return el('div', { class: 'menu-colors', role: 'none' }, [
       el('span', { class: 'menu-label menu-colors-label', 'aria-hidden': 'true' }, [t('color.filterMenu')]),
       el('div', { class: 'menu-colors-grid', role: 'group', 'aria-label': t('color.filterMenu') }, dots),

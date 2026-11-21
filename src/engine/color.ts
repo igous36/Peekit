@@ -59,6 +59,44 @@ export function hslToHex({ h, s, l }: Hsl): string {
   return `#${hex(r)}${hex(g)}${hex(b)}`.toUpperCase();
 }
 
+/**
+ * HSV（2026-11-21，按颜色筛选的取色器用）：h 0–360，s、v 0–100。
+ * 和 HSL 不同，饱和度、明度各自拉到两头就是纯灰 / 最鲜艳、纯黑 / 最亮，任意颜色都取得到
+ */
+export interface Hsv {
+  h: number;
+  s: number;
+  v: number;
+}
+
+export function hexToHsv(hex: string): Hsv {
+  const n = normalizeHex(hex) ?? '#808080';
+  const r = parseInt(n.slice(1, 3), 16) / 255;
+  const g = parseInt(n.slice(3, 5), 16) / 255;
+  const b = parseInt(n.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  return { h, s: max === 0 ? 0 : (d / max) * 100, v: max * 100 };
+}
+
+export function hsvToHex({ h, s, v }: Hsv): string {
+  const S = clamp(s, 0, 100) / 100, V = clamp(v, 0, 100) / 100;
+  const H = ((h % 360) + 360) % 360;
+  const c = V * S;
+  const x = c * (1 - Math.abs(((H / 60) % 2) - 1));
+  const m = V - c;
+  const [r, g, b] =
+    H < 60 ? [c, x, 0] : H < 120 ? [x, c, 0] : H < 180 ? [0, c, x] : H < 240 ? [0, x, c] : H < 300 ? [x, 0, c] : [c, 0, x];
+  const hex = (u: number) => Math.round((u + m) * 255).toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(b)}`.toUpperCase();
+}
+
 /** 把浓淡 / 明暗夹进调色器的范围（色相不动） */
 export function clampMuted(c: Hsl): Hsl {
   return { h: c.h, s: clamp(c.s, MUTED.sMin, MUTED.sMax), l: clamp(c.l, MUTED.lMin, MUTED.lMax) };

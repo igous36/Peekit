@@ -40,7 +40,6 @@ import { CheckBar, CHECK_ICONS } from './view/check-bar';
 import {
   COLOR_FAMILIES, matchesColor, sameColorFilter, swatchesFromShapes, swatchesOf, type ColorFilter, type Swatch,
 } from './engine/swatches';
-import { normalizeHex } from './engine/color';
 import { ColorIndex } from './data/color-index';
 import { sampleImage, sampleSvg } from './data/palette-loader';
 import { Palette } from './view/palette';
@@ -157,7 +156,6 @@ export class App {
   private colorChipDot: HTMLElement;
   private colorChipText: HTMLElement;
   /** “任意颜色”用的系统取色框（藏起来的 <input type="color">） */
-  private colorInput: HTMLInputElement;
   /** 画师自检（2026-11-20）：翻转 / 灰度 / 模糊，只在这次运行里有效 */
   private checks: CheckState = { ...NO_CHECKS };
   private checkBar: CheckBar;
@@ -357,7 +355,7 @@ export class App {
       setRatingFilter: (n) => this.setRatingFilter(n),
       colorFilter: () => this.colorFilter,
       setColorFilter: (f) => void this.setColorFilter(f),
-      pickColor: () => this.pickFilterColor(),
+      pickColor: (at) => this.pickFilterColor(at),
       checks: () => this.checks,
       toggleCheck: (k) => this.toggleCheck(k),
       openPalette: () => this.openPalette(),
@@ -470,11 +468,6 @@ export class App {
     ]);
     this.colorChip.addEventListener('click', () => void this.setColorFilter(null));
     this.hud.statusSlot.append(this.filterChip, this.colorChip);
-    this.colorInput = el('input', { type: 'color', class: 'color-input', tabindex: -1, 'aria-hidden': 'true' });
-    this.colorInput.addEventListener('change', () => {
-      const hex = normalizeHex(this.colorInput.value);
-      if (hex) void this.setColorFilter({ kind: 'hex', hex });
-    });
     // 命令面板（2026-11-20）：Ctrl+K 在哪都能打开（情绪板里也行）；拖起阵列开着时不行
     this.cmdPalette = new Palette();
     document.addEventListener('keydown', (e) => {
@@ -618,7 +611,6 @@ export class App {
       this.about.root,
       this.confirmDialog.root,
       this.cmdPalette.root,
-      this.colorInput,
       this.hud.live,
     ]);
     mount.replaceChildren(this.root);
@@ -1800,15 +1792,17 @@ export class App {
     this.toast.show(t('color.filtered', { name, count: this.lib.works.length }));
   }
 
-  /** 菜单里的“任意颜色”：弹系统的取色框（带吸管），选好按这个颜色筛 */
-  private pickFilterColor(): void {
-    const input = this.colorInput;
-    input.value = this.colorFilter?.kind === 'hex' ? this.colorFilter.hex.toLowerCase() : '#3e7bd6';
-    try {
-      input.showPicker();
-    } catch {
-      input.click();
-    }
+  /**
+   * 菜单里的“任意颜色”（2026-11-21 起不用系统取色框）：弹和系列调色器同一个样子的取色器，全范围模式
+   * （HSV 的浓淡、明暗都能拉到两头，没有色值输入）。点“完成”才按这个颜色筛；at 是弹出的位置，没给就放在菜单旁边
+   */
+  private pickFilterColor(at?: { x: number; y: number }): void {
+    const cur = this.colorFilter?.kind === 'hex' ? this.colorFilter.hex : '#3E7BD6';
+    this.colorPicker.open({ name: '', color: cur }, at?.x ?? 300, at?.y ?? 52, {
+      preview: () => {},
+      commit: (hex) => void this.setColorFilter({ kind: 'hex', hex }),
+      cancel: () => {},
+    }, { range: 'full', title: 'color.filterMenu' });
   }
 
   /** 色系的名字，或者色值；中日文句子里色值两边加空格（“带 #3E7BD6 的作品”） */
@@ -2174,7 +2168,7 @@ export class App {
         keywords: `color colour ${f.key} ${t(`colorf.${f.key}`, undefined, 'en')}`,
       }));
     }
-    add(act(t('color.pickAny'), () => this.pickFilterColor(), { keywords: 'color colour picker eyedropper hex' }));
+    add(act(t('color.pickAny'), () => this.pickFilterColor(), { keywords: 'color colour picker filter' }));
     if (has) {
       for (const k of CHECK_KINDS) {
         add(act(t(`check.${k}`), () => this.toggleCheck(k), {

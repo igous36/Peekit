@@ -1,7 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import {
-  normalizeHex, hexToHsl, hslToHex, clampMuted, nearestAngle, angleFromPoint, ringGradient, MUTED,
+  normalizeHex, hexToHsl, hslToHex, hexToHsv, hsvToHex, clampMuted, nearestAngle, angleFromPoint, ringGradient, MUTED,
 } from './color';
+
+describe('HSV（2026-11-21，按颜色筛选的取色器）', () => {
+  it('两头：纯黑、纯白、纯灰、最鲜艳', () => {
+    expect(hsvToHex({ h: 200, s: 100, v: 0 })).toBe('#000000');
+    expect(hsvToHex({ h: 200, s: 0, v: 100 })).toBe('#FFFFFF');
+    expect(hsvToHex({ h: 0, s: 0, v: 50 })).toBe('#808080');
+    expect(hsvToHex({ h: 0, s: 100, v: 100 })).toBe('#FF0000');
+    expect(hsvToHex({ h: 120, s: 100, v: 100 })).toBe('#00FF00');
+    expect(hsvToHex({ h: 240, s: 100, v: 100 })).toBe('#0000FF');
+  });
+
+  it('来回换算不变', () => {
+    for (const hex of ['#3E7BD6', '#D9493F', '#EBC53A', '#1E1E1E', '#FAFAFA', '#8B5FD0', '#000000', '#FFFFFF']) {
+      expect(hsvToHex(hexToHsv(hex))).toBe(hex);
+    }
+    expect(hexToHsv('#FF0000')).toEqual({ h: 0, s: 100, v: 100 });
+    expect(hexToHsv('#000000')).toEqual({ h: 0, s: 0, v: 0 });
+  });
+});
 import { seriesPalette, seriesPresets } from '../tokens';
 
 describe('系列颜色换算（2026-11-17 新增）', () => {

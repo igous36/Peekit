@@ -30,7 +30,7 @@ export interface ExportSettings {
   captions: boolean;
   /** 底部一段总说明（PDF 是封面） */
   summary: boolean;
-  /** 右下角的 Peekit 标识（图标 + 手写字标） */
+  /** 右下角的 Peekit 标识（手写字标） */
   brand: boolean;
   size: ExportSize;
 }
@@ -57,13 +57,13 @@ export interface Page {
   summary?: { x: number; y: number; w: number; big: boolean };
   /** 说明上面的一条细线 */
   rule?: { x: number; y: number; w: number };
-  /** Peekit 标识：右边缘 x、顶 y、高 h（宽见 brandWidth） */
+  /** Peekit 标识（手写字标）：右边缘 x、顶 y、高 h（宽见 brandWidth） */
   brand?: { x: number; y: number; h: number };
 }
 
-/** 标识的比例：图标是边长 h 的方块，隔 0.32h 是手写字标（高 1.1h，字标 viewBox 440 × 190） */
-export const BRAND = { gap: 0.32, mark: 1.1, markAspect: 440 / 190 } as const;
-export const brandWidth = (h: number): number => h * (1 + BRAND.gap + BRAND.mark * BRAND.markAspect);
+/** 标识只有手写字标，宽高比和字标的 viewBox 一样（440 × 190） */
+export const BRAND_ASPECT = 440 / 190;
+export const brandWidth = (h: number): number => h * BRAND_ASPECT;
 
 export interface ExportType {
   caption: number;
@@ -165,8 +165,8 @@ export function planExport(aspects: readonly number[], s: ExportSettings, cover:
   return plan;
 }
 
-/** 标识的高（u）：长图、网格、拼图和 PDF 封面 / 每页 */
-const BRAND_H = 30, BRAND_COVER_H = 36, BRAND_PAGE_H = 24;
+/** 字标的高（u）：长图、网格、拼图（和 40u 的说明标题分量相当）；PDF 封面；PDF 每页 */
+const BRAND_H = 46, BRAND_COVER_H = 60, BRAND_PAGE_H = 32;
 
 /** 标识和说明放在同一行：标识靠右、和标题行垂直居中，说明让出这段宽度 */
 function brandBesideSummary(page: Page, right: number, titleLine: number, bh: number, u: number): void {

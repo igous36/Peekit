@@ -14,16 +14,22 @@
 //
 // 打开时色相环转着展开、预设色依次弹出。拖动时整个界面里这个系列的圆点实时变色（preview），
 // 点“完成”才保存；取消 / Esc / 点外面恢复原来的颜色。减少动态效果时去掉这些动画。
+//
+// 全范围模式（2026-11-21，按颜色筛选的“任意颜色”）：同一个样子，但两条滑条是 HSV 的饱和度和明度，
+// 都能拉到 0 和 100（纯灰 / 最鲜艳、纯黑 / 最亮），色相环画得鲜艳一些；没有色值输入；预设色是 11 个色系。
 import { t, type MessageKey } from '../i18n';
 import { seriesPresets } from '../tokens';
 import {
-  MUTED, angleFromPoint, clampMuted, hexToHsl, hslToHex, nearestAngle, normalizeHex, ringGradient,
+  MUTED, angleFromPoint, clampMuted, hexToHsl, hexToHsv, hslToHex, hsvToHex, nearestAngle, normalizeHex, ringGradient,
 } from '../engine/color';
+import { COLOR_FAMILIES } from '../engine/swatches';
 import { el } from './dom';
 import { Popover } from './popover';
 
 /** 色相环的粗细（px），和 CSS 一致 */
 const RING = 18;
+/** 全范围模式下色相环的浓淡 */
+const FULL_RING_TONE = { s: 78, l: 56 };
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 export interface ColorPickerHandlers {
@@ -32,6 +38,21 @@ export interface ColorPickerHandlers {
   commit: (hex: string) => void;
   cancel: () => void;
 }
+
+export interface ColorPickerOptions {
+  /** muted：系列色（HSL，只在低饱和、中等明暗里取，带色值输入）；full：任意颜色（HSV 全范围，没有色值输入） */
+  range?: 'muted' | 'full';
+  /** 标题（默认“系列颜色”） */
+  title?: MessageKey;
+}
+
+interface Preset {
+  hex: string;
+  label: MessageKey;
+}
+
+const MUTED_PRESETS: readonly Preset[] = seriesPresets.map((p) => ({ hex: p.hex, label: `color.${p.key}` as MessageKey }));
+const FULL_PRESETS: readonly Preset[] = COLOR_FAMILIES.map((f) => ({ hex: f.hex, label: `colorf.${f.key}` as MessageKey }));
 
 type Source = 'init' | 'ring' | 'slider' | 'hex' | 'preset';
 
@@ -53,11 +74,17 @@ export class ColorPicker {
   private grid: HTMLElement;
   private sel: HTMLElement;
   private swatches: HTMLButtonElement[] = [];
+  private presets: readonly Preset[] = [];
+  private ring: HTMLElement;
+  private titleEl: HTMLElement;
+  /** 全范围模式（HSV） */
+  private full = false;
 
-  // 当前颜色：h / s / l 是调色器的状态（滑条、旋钮），hex 是实际选中的颜色
+  // 当前颜色：h / s / l（全范围模式是 h / s / v）是调色器的状态（滑条、旋钮），hex 是实际选中的颜色
   private h = 0;
   private s = 40;
   private l = 56;
+  private v = 100;
   private hex = '#808080';
   /** 旋钮的累计角度（不折回 0–360，转动时走近的那一边） */
   private angle = 0;
@@ -68,11 +95,13 @@ export class ColorPicker {
   constructor() {
     this.headDot = el('span', { class: 'dot cp-head-dot' });
     this.nameEl = el('span', { class: 'cp-name' });
-    const head = el('p', { class: 'pop-title' }, [el('span', { 'data-i18n': 'color.title' }), this.headDot, this.nameEl]);
+    this.titleEl = el('span', { 'data-i18n': 'color.title' });
+    const head = el('p', { class: 'pop-title' }, [this.titleEl, this.headDot, this.nameEl]);
 
     // ── 色相环 + 旋钮 + 圆盘 ──
     const ring = el('div', { class: 'cp-ring' });
     ring.style.background = ringGradient();
+    this.ring = ring;
     this.knob = el('span', {
       class: 'cp-knob', role: 'slider', tabindex: 0, 'aria-valuemin': 0, 'aria-valuemax': 359, 'data-i18n-aria': 'color.hue',
     });
@@ -106,7 +135,8 @@ export class ColorPicker {
       this.apply('slider');
     });
     this.light.addEventListener('input', () => {
-      this.l = Number(this.light.value);
+      if (this.full) this.v = Number(this.light.value);
+      else this.l = Number(this.light.value);
       this.apply('slider');
     });
     const slider = (key: MessageKey, input: HTMLInputElement) =>
@@ -115,20 +145,7 @@ export class ColorPicker {
     // ── 预设色 ──
     this.sel = el('span', { class: 'cp-sel', 'aria-hidden': 'true' });
     this.grid = el('div', { class: 'cp-swatches', role: 'group', 'data-i18n-aria': 'color.presets' }, [this.sel]);
-    seriesPresets.forEach((p, i) => {
-      const name = `color.${p.key}`;
-      const b = el('button', {
-        type: 'button', class: 'cp-swatch', 'aria-pressed': 'false', 'data-i18n-aria': name, 'data-i18n-title': name,
-      });
-      b.style.background = p.hex;
-      b.style.setProperty('--i', String(i));
-      b.addEventListener('click', () => {
-        const r = b.getBoundingClientRect();
-        this.setHex(p.hex, 'preset', { x: r.left + r.width / 2, y: r.top + r.height / 2 });
-      });
-      this.swatches.push(b);
-      this.grid.append(b);
-    });
+    this.setPresets(MUTED_PRESETS);
 
     // ── 取消 / 完成 ──
     const cancel = el('button', { type: 'button', class: 'pop-btn', 'data-i18n': 'pop.cancel' });
@@ -159,14 +176,50 @@ export class ColorPicker {
     this.root = this.pop.root;
   }
 
-  open(series: { name: string; color: string }, x: number, y: number, handlers: ColorPickerHandlers): void {
+  open(
+    series: { name: string; color: string }, x: number, y: number, handlers: ColorPickerHandlers, opts: ColorPickerOptions = {},
+  ): void {
     this.pop.dismiss(); // 上一次还开着：先按取消处理
     this.handlers = handlers;
+    // 模式：滑条范围、色值输入、预设色、色相环（都在显示前改好，量尺寸时才准）
+    this.full = opts.range === 'full';
+    const title = opts.title ?? 'color.title';
+    this.titleEl.dataset.i18n = title;
+    this.titleEl.textContent = t(title);
+    this.hexInput.hidden = this.full;
+    this.sat.min = String(this.full ? 0 : MUTED.sMin);
+    this.sat.max = String(this.full ? 100 : MUTED.sMax);
+    this.light.min = String(this.full ? 0 : MUTED.lMin);
+    this.light.max = String(this.full ? 100 : MUTED.lMax);
+    this.ring.style.background = this.full ? ringGradient(FULL_RING_TONE) : ringGradient();
+    this.setPresets(this.full ? FULL_PRESETS : MUTED_PRESETS);
     this.nameEl.textContent = series.name;
     this.nameEl.title = series.name;
+    this.nameEl.hidden = !series.name;
     // 先显示（量好尺寸、摆好位置），再按当前颜色摆旋钮和选中圈（它们要用到布局）
-    this.pop.show(x, y, `${t('color.title')} · ${series.name}`, this.knob);
+    this.pop.show(x, y, series.name ? `${t(title)} · ${series.name}` : t(title), this.knob);
     this.setHex(series.color, 'init');
+  }
+
+  /** 换一组预设色（系列色 / 色系），同一组不重建 */
+  private setPresets(list: readonly Preset[]): void {
+    if (list === this.presets) return;
+    this.presets = list;
+    for (const b of this.swatches) b.remove();
+    this.swatches = list.map((p, i) => {
+      const b = el('button', {
+        type: 'button', class: 'cp-swatch', 'aria-pressed': 'false',
+        'data-i18n-aria': p.label, 'data-i18n-title': p.label, 'aria-label': t(p.label), title: t(p.label),
+      });
+      b.style.background = p.hex;
+      b.style.setProperty('--i', String(i));
+      b.addEventListener('click', () => {
+        const r = b.getBoundingClientRect();
+        this.setHex(p.hex, 'preset', { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+      });
+      this.grid.append(b);
+      return b;
+    });
   }
 
   // ───────────── 取色 ─────────────
@@ -175,11 +228,19 @@ export class ColorPicker {
   private setHex(hex: string, source: Source, origin?: { x: number; y: number }): void {
     const n = normalizeHex(hex);
     if (!n) return;
-    const c = hexToHsl(n);
-    // 灰色没有色相：保留旋钮原来的色相
-    if (c.s > 0.5) this.h = c.h;
-    this.s = clamp(c.s, MUTED.sMin, MUTED.sMax);
-    this.l = clamp(c.l, MUTED.lMin, MUTED.lMax);
+    if (this.full) {
+      const c = hexToHsv(n);
+      // 灰色、黑色没有色相：保留旋钮原来的色相
+      if (c.s > 0.5 && c.v > 0.5) this.h = c.h;
+      this.s = c.s;
+      this.v = c.v;
+    } else {
+      const c = hexToHsl(n);
+      // 灰色没有色相：保留旋钮原来的色相
+      if (c.s > 0.5) this.h = c.h;
+      this.s = clamp(c.s, MUTED.sMin, MUTED.sMax);
+      this.l = clamp(c.l, MUTED.lMin, MUTED.lMax);
+    }
     this.hex = n;
     this.apply(source, origin);
   }
@@ -202,8 +263,10 @@ export class ColorPicker {
 
   /** 把当前状态画出来：圆盘、旋钮、滑条、色值、选中圈，并通知预览 */
   private apply(source: Source, origin?: { x: number; y: number }): void {
-    // 色相环和滑条只在低饱和范围里取色；预设色和输入的色值原样保留
-    if (source === 'ring' || source === 'slider') this.hex = hslToHex(clampMuted({ h: this.h, s: this.s, l: this.l }));
+    // 色相环和滑条只在低饱和范围里取色（全范围模式不限）；预设色和输入的色值原样保留
+    if (source === 'ring' || source === 'slider') {
+      this.hex = this.full ? hsvToHex({ h: this.h, s: this.s, v: this.v }) : hslToHex(clampMuted({ h: this.h, s: this.s, l: this.l }));
+    }
     const hex = this.hex;
     const animated = source === 'preset' || source === 'hex';
 
@@ -218,11 +281,18 @@ export class ColorPicker {
     this.knob.setAttribute('aria-valuenow', String(Math.round(this.h) % 360));
     this.knob.setAttribute('aria-valuetext', hex);
 
-    const h = this.h.toFixed(1), s = this.s.toFixed(1), l = this.l.toFixed(1);
     this.sat.value = String(Math.round(this.s));
-    this.light.value = String(Math.round(this.l));
-    this.sat.style.background = `linear-gradient(to right, hsl(${h} ${MUTED.sMin}% ${l}%), hsl(${h} ${MUTED.sMax}% ${l}%))`;
-    this.light.style.background = `linear-gradient(to right, hsl(${h} ${s}% ${MUTED.lMin}%), hsl(${h} ${s}% ${MUTED.lMax}%))`;
+    if (this.full) {
+      // HSV：固定色相和明度时 RGB 随饱和度线性变化，固定饱和度时随明度线性变化，两端两个色值的渐变就是准的
+      this.light.value = String(Math.round(this.v));
+      this.sat.style.background = `linear-gradient(to right, ${hsvToHex({ h: this.h, s: 0, v: this.v })}, ${hsvToHex({ h: this.h, s: 100, v: this.v })})`;
+      this.light.style.background = `linear-gradient(to right, #000000, ${hsvToHex({ h: this.h, s: this.s, v: 100 })})`;
+    } else {
+      const h = this.h.toFixed(1), s = this.s.toFixed(1), l = this.l.toFixed(1);
+      this.light.value = String(Math.round(this.l));
+      this.sat.style.background = `linear-gradient(to right, hsl(${h} ${MUTED.sMin}% ${l}%), hsl(${h} ${MUTED.sMax}% ${l}%))`;
+      this.light.style.background = `linear-gradient(to right, hsl(${h} ${s}% ${MUTED.lMin}%), hsl(${h} ${s}% ${MUTED.lMax}%))`;
+    }
     if (document.activeElement !== this.hexInput || source !== 'hex') this.hexInput.value = hex;
     this.headDot.style.background = hex;
     this.moveSelection(source === 'init');
@@ -286,7 +356,7 @@ export class ColorPicker {
 
   /** 预设色的选中圈：滑到选中的那个（带回弹）；当前颜色不是预设色就淡出 */
   private moveSelection(instant: boolean): void {
-    const i = seriesPresets.findIndex((p) => p.hex === this.hex);
+    const i = this.presets.findIndex((p) => p.hex === this.hex);
     this.swatches.forEach((b, k) => b.setAttribute('aria-pressed', String(k === i)));
     if (i < 0) {
       this.sel.classList.remove('is-on');

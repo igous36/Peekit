@@ -59,7 +59,7 @@ src/
                    时间轴色条（barcode）、画师自检（checks）、命令面板搜索（search）、创作年历统计（calendar）、
                    新旧对比的配对和同步缩放（compare）、情绪板标注的数据和几何（marks）、
                    导出排版（export-layout）
-  view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器、关于对话框、
+  view/            DOM 视图：舞台、信息卡、时间轴、菜单、右键菜单、调色器（系列色；按颜色筛选的“任意颜色”用它的全范围模式）、关于对话框、
                    拖起阵列（board-picker.ts）、情绪板画布（board/，标注层在 board-marks.ts）、星星（stars.ts）、
                    自检工具条（check-bar.ts）、命令面板（palette.ts）、创作年历（calendar.ts）和
                    它导出的年度回顾图（year-poster.ts）、新旧对比（compare.ts）、
@@ -125,7 +125,7 @@ Rust 的 `open_reference`（`ui.rs`）开一个无边框、透明、钉在最上
 
 PDF 不引入库（`data/pdf.ts`）：每页先画成一张 canvas、压成 JPEG（质量 0.9），原样放进 PDF（DCTDecode）铺满整页，文字已经画在图里；标题写进文档信息（UTF-16BE）。长图受画布上限约束（单边 30000、面积 1.6 亿像素），超了整张等比缩小。
 
-导出设置记在 localStorage（`peekit:export`），作者名也在里面。导出里的 Peekit 标识用 `src-tauri/icons/icon.png`（512px）和 `view/wordmark.ts` 里字标的笔画（canvas 上用 Path2D 描）。
+导出设置记在 localStorage（`peekit:export`），作者名也在里面。导出里的 Peekit 标识是 `view/wordmark.ts` 里字标的笔画（canvas 上用 Path2D 描，预览里直接用 `markSvg`）。
 
 `PEEKIT_PERF=export`：取前 8 幅读得了的作品，各导出一次长图（2 倍尺寸，会读原图）、3 列网格（PNG）、4:3 拼图、A4 横版 PDF，打出尺寸、大小、耗时，图片版抽查第一幅中间一块的色阶，然后关掉主窗口。不保存文件。
 

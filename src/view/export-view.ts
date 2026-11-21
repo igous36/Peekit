@@ -21,11 +21,11 @@ import { el, svgIcon, ICON_PREV } from './dom';
 import { fillArt } from './art';
 import { markSvg, PEEKIT } from './wordmark';
 import {
-  BRAND, brandWidth, dateRange, pageSize, pickCover, planExport,
+  brandWidth, dateRange, pageSize, pickCover, planExport,
   type CollageRatio, type ExportLayout, type ExportPlan, type ExportSettings, type ExportSize, type PdfPageSize, type Spacing,
 } from '../engine/export-layout';
 import {
-  BRAND_ICON, EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type RenderControl,
+  EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type RenderControl,
 } from './export-render';
 
 export type ExportScope = 'all' | 'filtered' | 'series';
@@ -506,12 +506,10 @@ export class ExportView {
       sheet.append(title, meta);
     }
     if (p.brand) {
-      // Peekit 标识：图标 + 手写字标（灰色）
+      // Peekit 标识：手写字标（灰色）
       const b = p.brand;
-      const icon = el('img', { src: BRAND_ICON, alt: '', draggable: 'false' });
-      Object.assign(icon.style, { width: `${b.h}px`, height: `${b.h}px` });
-      const brand = el('div', { class: 'export-brand', 'aria-hidden': 'true' }, [icon, markSvg(PEEKIT, b.h * BRAND.mark)]);
-      Object.assign(brand.style, { left: `${b.x - brandWidth(b.h)}px`, top: `${b.y}px`, height: `${b.h}px`, gap: `${b.h * BRAND.gap}px`, color: sub });
+      const brand = el('div', { class: 'export-brand', 'aria-hidden': 'true' }, [markSvg(PEEKIT, b.h)]);
+      Object.assign(brand.style, { left: `${b.x - brandWidth(b.h)}px`, top: `${b.y}px`, height: `${b.h}px`, color: sub });
       sheet.append(brand);
     }
     const wrap = el('div', { class: 'export-sheet-wrap' }, [sheet]);
