@@ -125,7 +125,7 @@ Rust 的 `open_reference`（`ui.rs`）开一个无边框、透明、钉在最上
 
 PDF 不引入库（`data/pdf.ts`）：每页先画成一张 canvas、压成 JPEG（质量 0.9），原样放进 PDF（DCTDecode）铺满整页，文字已经画在图里；标题写进文档信息（UTF-16BE）。长图受画布上限约束（单边 30000、面积 1.6 亿像素），超了整张等比缩小。
 
-导出设置记在 localStorage（`peekit:export`），作者名也在里面。
+导出设置记在 localStorage（`peekit:export`），作者名也在里面。导出里的 Peekit 标识用 `src-tauri/icons/icon.png`（512px）和 `view/wordmark.ts` 里字标的笔画（canvas 上用 Path2D 描）。
 
 `PEEKIT_PERF=export`：取前 8 幅读得了的作品，各导出一次长图（2 倍尺寸，会读原图）、3 列网格（PNG）、4:3 拼图、A4 横版 PDF，打出尺寸、大小、耗时，图片版抽查第一幅中间一块的色阶，然后关掉主窗口。不保存文件。
 

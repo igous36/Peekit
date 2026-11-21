@@ -1,9 +1,9 @@
 // 2026-11-21：导出排版
 import { describe, it, expect } from 'vitest';
-import { dateRange, fillBox, pageSize, pickCover, planExport, MAX_SIDE, type Cell, type ExportSettings } from './export-layout';
+import { brandWidth, dateRange, fillBox, pageSize, pickCover, planExport, MAX_SIDE, type Cell, type ExportSettings, type Page } from './export-layout';
 
 const base: ExportSettings = {
-  layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, size: 1,
+  layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, brand: false, size: 1,
 };
 
 /** 两个框有没有重叠（留 0.5px 浮点余量） */
@@ -114,5 +114,49 @@ describe('导出排版', () => {
     expect(c).toHaveLength(4);
     expect(c).toEqual([...c].sort((a, b) => a - b));
     expect(c).toEqual(expect.arrayContaining([1, 3, 8]));
+  });
+});
+
+describe('导出的 Peekit 标识', () => {
+  /** 标识整块在页面的留白里，不压作品、不压说明的文字 */
+  function brandOk(p: Page) {
+    const b = p.brand!;
+    const left = b.x - brandWidth(b.h);
+    expect(left).toBeGreaterThan(0);
+    expect(b.x).toBeLessThan(p.w);
+    expect(b.y + b.h).toBeLessThan(p.h);
+    for (const c of p.cells) {
+      const below = b.y >= c.y + c.h, beside = left >= c.x + c.w || b.x <= c.x;
+      expect(below || beside).toBe(true);
+    }
+    if (p.summary) expect(p.summary.x + p.summary.w).toBeLessThan(left);
+  }
+
+  it('长图、网格、拼图：和说明同一行靠右；没有说明时单独一行', () => {
+    for (const layout of ['long', 'grid', 'collage'] as const) {
+      for (const summary of [true, false]) {
+        const p = planExport(aspects, { ...base, layout, summary, brand: true }).pages[0];
+        brandOk(p);
+        if (summary) expect(p.brand!.y).toBeGreaterThanOrEqual(p.summary!.y);
+      }
+    }
+  });
+
+  it('关掉就没有，长图也不多占高度', () => {
+    const off = planExport(aspects, { ...base, summary: false }).pages[0];
+    const on = planExport(aspects, { ...base, summary: false, brand: true }).pages[0];
+    expect(off.brand).toBeUndefined();
+    expect(on.h).toBeGreaterThan(off.h);
+    const withSummary = planExport(aspects, { ...base, brand: true }).pages[0];
+    expect(withSummary.h).toBe(planExport(aspects, base).pages[0].h);
+  });
+
+  it('PDF：有封面只放封面，没封面每页右下角一个', () => {
+    const withCover = planExport(aspects, { ...base, layout: 'pdf', brand: true }, pickCover(aspects.map(() => undefined))).pages;
+    brandOk(withCover[0]);
+    expect(withCover.slice(1).every((p) => !p.brand)).toBe(true);
+    const noCover = planExport(aspects, { ...base, layout: 'pdf', summary: false, brand: true }).pages;
+    expect(noCover.every((p) => p.brand)).toBe(true);
+    noCover.forEach(brandOk);
   });
 });

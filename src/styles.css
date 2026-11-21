@@ -2588,6 +2588,18 @@ button:focus-visible {
   font-weight: 600;
 }
 
+.export-brand {
+  position: absolute;
+  display: flex;
+  align-items: center;
+}
+
+.export-brand > img,
+.export-brand > svg {
+  display: block;
+  flex: none;
+}
+
 .export-panel {
   position: absolute;
   top: 64px;

@@ -408,4 +408,5 @@ export const ar: Record<MessageKey, string> = {
   'export.progress': 'جارٍ التصدير {done} / {total}',
   'export.saving': 'جارٍ الحفظ…',
   'export.cancelled': 'أُلغي التصدير',
+  'export.brand': 'شعار Peekit',
 };

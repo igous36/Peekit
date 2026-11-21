@@ -407,4 +407,5 @@ export const es: Record<MessageKey, string> = {
   'export.progress': 'Exportando {done} / {total}',
   'export.saving': 'Guardando…',
   'export.cancelled': 'Exportación cancelada',
+  'export.brand': 'Logo de Peekit',
 };

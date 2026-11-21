@@ -407,4 +407,5 @@ export const ko: Record<MessageKey, string> = {
   'export.progress': '내보내는 중 {done} / {total}',
   'export.saving': '저장 중…',
   'export.cancelled': '내보내기를 취소했습니다',
+  'export.brand': 'Peekit 로고',
 };

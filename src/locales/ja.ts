@@ -407,4 +407,5 @@ export const ja: Record<MessageKey, string> = {
   'export.progress': '書き出し中 {done} / {total}',
   'export.saving': '保存中…',
   'export.cancelled': '書き出しをキャンセルしました',
+  'export.brand': 'Peekit のロゴ',
 };

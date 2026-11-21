@@ -30,6 +30,8 @@ export interface ExportSettings {
   captions: boolean;
   /** 底部一段总说明（PDF 是封面） */
   summary: boolean;
+  /** 右下角的 Peekit 标识（图标 + 手写字标） */
+  brand: boolean;
   size: ExportSize;
 }
 
@@ -55,7 +57,13 @@ export interface Page {
   summary?: { x: number; y: number; w: number; big: boolean };
   /** 说明上面的一条细线 */
   rule?: { x: number; y: number; w: number };
+  /** Peekit 标识：右边缘 x、顶 y、高 h（宽见 brandWidth） */
+  brand?: { x: number; y: number; h: number };
 }
+
+/** 标识的比例：图标是边长 h 的方块，隔 0.32h 是手写字标（高 1.1h，字标 viewBox 440 × 190） */
+export const BRAND = { gap: 0.32, mark: 1.1, markAspect: 440 / 190 } as const;
+export const brandWidth = (h: number): number => h * (1 + BRAND.gap + BRAND.mark * BRAND.markAspect);
 
 export interface ExportType {
   caption: number;
@@ -157,13 +165,30 @@ export function planExport(aspects: readonly number[], s: ExportSettings, cover:
   return plan;
 }
 
-/** 内容底 y 之后接上说明，返回整页高度 */
+/** 标识的高（u）：长图、网格、拼图和 PDF 封面 / 每页 */
+const BRAND_H = 30, BRAND_COVER_H = 36, BRAND_PAGE_H = 24;
+
+/** 标识和说明放在同一行：标识靠右、和标题行垂直居中，说明让出这段宽度 */
+function brandBesideSummary(page: Page, right: number, titleLine: number, bh: number, u: number): void {
+  const sm = page.summary!;
+  page.brand = { x: right, y: sm.y + (titleLine - bh) / 2, h: bh };
+  sm.w = Math.max(0, sm.w - brandWidth(bh) - 40 * u);
+}
+
+/** 内容底 y 之后接上说明（和标识），定出整页高度 */
 function finishLong(page: Page, bottom: number, s: ExportSettings, u: number, M: number, t: ExportType): void {
+  const bh = BRAND_H * u;
   if (s.summary) {
     const ry = bottom + Math.max(GAP[s.gap] * u, 72 * u);
     page.rule = { x: M, y: ry, w: page.w - 2 * M };
     page.summary = { x: M, y: ry + 40 * u, w: page.w - 2 * M, big: false };
+    if (s.brand) brandBesideSummary(page, page.w - M, t.titleLine, bh, u);
     page.h = Math.round(ry + summaryBlock(t, u) + M);
+  } else if (s.brand) {
+    // 没有说明：标识单独一行，靠右
+    const y = bottom + Math.max(GAP[s.gap] * u, 48 * u);
+    page.brand = { x: page.w - M, y, h: bh };
+    page.h = Math.round(y + bh + M);
   } else page.h = Math.round(bottom + M);
 }
 
@@ -275,11 +300,16 @@ function collagePlan(a: readonly number[], s: ExportSettings): ExportPlan {
   const t = typeFor(u);
   const page: Page = { w: W, h: H, cells: [] };
   let bottom = H - M;
+  const bh = BRAND_H * u;
   if (s.summary) {
     const top = H - M - summaryBlock(t, u);
     page.rule = { x: M, y: top, w: W - 2 * M };
     page.summary = { x: M, y: top + 40 * u, w: W - 2 * M, big: false };
+    if (s.brand) brandBesideSummary(page, W - M, t.titleLine, bh, u);
     bottom = top - Math.max(G, 48 * u);
+  } else if (s.brand) {
+    page.brand = { x: W - M, y: H - M - bh, h: bh };
+    bottom = H - M - bh - Math.max(G, 32 * u);
   }
   const cap = s.captions ? capBlock(u, 2) : 0;
   page.cells = fillBox(a, { x: M, y: M, w: W - 2 * M, h: bottom - M }, G, cap, 16 * u);
@@ -298,6 +328,7 @@ function pdfPlan(a: readonly number[], s: ExportSettings, cover: readonly number
     const sumH = big.titleLine + big.metaGap + big.metaLine;
     const top = H - M - sumH;
     const page: Page = { w: W, h: H, cells: [], summary: { x: M, y: top, w: W - 2 * M, big: true } };
+    if (s.brand) brandBesideSummary(page, W - M, big.titleLine, BRAND_COVER_H * u, u);
     const picks = cover.filter((i) => i >= 0 && i < a.length).slice(0, 6);
     const cells = fillBox(picks.map((i) => a[i]), { x: M, y: M, w: W - 2 * M, h: top - 72 * u - M }, 16 * u, 0, 0, true);
     page.cells = cells.map((c) => ({ ...c, i: picks[c.i] }));
@@ -314,7 +345,13 @@ function pdfPlan(a: readonly number[], s: ExportSettings, cover: readonly number
     const x = (W - w) / 2, y = M + (bh - h) / 2;
     const c: Cell = { i, x, y, w, h };
     if (s.captions) c.cap = { x, y: y + h + 16 * u, w };
-    pages.push({ w: W, h: H, cells: [c] });
+    const page: Page = { w: W, h: H, cells: [c] };
+    // 没有封面时每页右下角留白里一个小标识（有封面就只放封面上）
+    if (s.brand && !s.summary) {
+      const bh = BRAND_PAGE_H * u;
+      page.brand = { x: W - M, y: H - M / 2 - bh / 2, h: bh };
+    }
+    pages.push(page);
   });
   return { pages, type: t, cover: s.summary ? big : undefined, capLines: 1, shrunk: false };
 }

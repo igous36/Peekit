@@ -429,6 +429,7 @@ const zh = {
   'export.progress': '正在导出 {done} / {total}',
   'export.saving': '正在保存…',
   'export.cancelled': '已取消导出',
+  'export.brand': 'Peekit 标识',
 };
 
 export type MessageKey = keyof typeof zh;
@@ -839,6 +840,7 @@ const en: Record<MessageKey, string> = {
   'export.progress': 'Exporting {done} / {total}',
   'export.saving': 'Saving…',
   'export.cancelled': 'Export canceled',
+  'export.brand': 'Peekit logo',
 };
 
 export const MESSAGES: Record<Lang, Record<MessageKey, string>> = {

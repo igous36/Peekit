@@ -408,4 +408,5 @@ export const zhTW: Record<MessageKey, string> = {
   'export.progress': '正在匯出 {done} / {total}',
   'export.saving': '正在儲存…',
   'export.cancelled': '已取消匯出',
+  'export.brand': 'Peekit 標誌',
 };

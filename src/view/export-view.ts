@@ -19,12 +19,13 @@ import { t, type MessageKey } from '../i18n';
 import { displayTitle } from '../data/series-ops';
 import { el, svgIcon, ICON_PREV } from './dom';
 import { fillArt } from './art';
+import { markSvg, PEEKIT } from './wordmark';
 import {
-  dateRange, pageSize, pickCover, planExport,
+  BRAND, brandWidth, dateRange, pageSize, pickCover, planExport,
   type CollageRatio, type ExportLayout, type ExportPlan, type ExportSettings, type ExportSize, type PdfPageSize, type Spacing,
 } from '../engine/export-layout';
 import {
-  EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type RenderControl,
+  BRAND_ICON, EXPORT_THEMES, renderImage, renderPdf, type ExportBg, type ExportImages, type ExportTexts, type RenderControl,
 } from './export-render';
 
 export type ExportScope = 'all' | 'filtered' | 'series';
@@ -56,7 +57,7 @@ export interface Saved extends ExportSettings {
 
 const KEY = 'peekit:export';
 const DEFAULTS: Saved = {
-  layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, size: 1,
+  layout: 'long', columns: 3, ratio: '16:9', page: 'a4-landscape', margin: 1, gap: 1, captions: false, summary: true, brand: true, size: 1,
   bg: 'white', format: 'jpg', author: '',
 };
 const LAYOUTS: ExportLayout[] = ['long', 'grid', 'collage', 'pdf'];
@@ -91,6 +92,7 @@ function load(): Saved {
       gap: pick(raw.gap, [0, 1, 2] as Spacing[], DEFAULTS.gap),
       captions: typeof raw.captions === 'boolean' ? raw.captions : DEFAULTS.captions,
       summary: typeof raw.summary === 'boolean' ? raw.summary : DEFAULTS.summary,
+      brand: typeof raw.brand === 'boolean' ? raw.brand : DEFAULTS.brand,
       size: pick(raw.size, SIZES, DEFAULTS.size),
       bg: pick(raw.bg, BGS, DEFAULTS.bg),
       format: pick(raw.format, ['jpg', 'png'] as const, DEFAULTS.format),
@@ -401,6 +403,7 @@ export class ExportView {
       this.toggle(() => t(isPdf() ? 'export.cover' : 'export.summary'), () => s.summary, (v) => this.set('summary', v)),
       summaryFields,
       this.toggle(() => t('export.captions'), () => s.captions, (v) => this.set('captions', v)),
+      this.toggle(() => t('export.brand'), () => s.brand, (v) => this.set('brand', v)),
       el('h2', { class: 'export-h', 'data-i18n': 'export.output' }, [t('export.output')]),
       this.row('export.size', this.seg('export.size', [[1, 'export.size.1'], [1.5, 'export.size.15'], [2, 'export.size.2']] as const, () => s.size, (v) => this.set('size', v))),
       this.row('export.format', this.seg('export.format', [['jpg', 'JPG'], ['png', 'PNG']] as const, () => s.format, (v) => this.set('format', v)), () => !isPdf()),
@@ -501,6 +504,15 @@ export class ExportView {
         fontSize: `${st.meta}px`, lineHeight: `${st.metaLine}px`, color: sub,
       });
       sheet.append(title, meta);
+    }
+    if (p.brand) {
+      // Peekit 标识：图标 + 手写字标（灰色）
+      const b = p.brand;
+      const icon = el('img', { src: BRAND_ICON, alt: '', draggable: 'false' });
+      Object.assign(icon.style, { width: `${b.h}px`, height: `${b.h}px` });
+      const brand = el('div', { class: 'export-brand', 'aria-hidden': 'true' }, [icon, markSvg(PEEKIT, b.h * BRAND.mark)]);
+      Object.assign(brand.style, { left: `${b.x - brandWidth(b.h)}px`, top: `${b.y}px`, height: `${b.h}px`, gap: `${b.h * BRAND.gap}px`, color: sub });
+      sheet.append(brand);
     }
     const wrap = el('div', { class: 'export-sheet-wrap' }, [sheet]);
     Object.assign(wrap.style, { width: `${Math.round(p.w * scale)}px`, height: `${Math.round(p.h * scale)}px` });
